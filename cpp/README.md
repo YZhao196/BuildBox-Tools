@@ -149,9 +149,12 @@ g++ -std=c++17 -Iinclude tests/test_client.cpp -o /tmp/bb_test -lws2_32 && /tmp/
 g++ -std=c++17 -Iinclude tests/test_data.cpp   -o /tmp/bb_data -lws2_32 && /tmp/bb_data
 ```
 
-The wire contract itself is checked against a real server by the server's own
-suite (`apps/server/src/routes/devices.test.ts`), which covers token scope,
-ingest validation and the command round trip.
+The wire contract itself is exercised in this repository by the management
+library's suite (`management/tests/test_server.py`), which drives the Python
+binding against a real receiver over a real socket — token scope, ingest
+validation, shape refusal and the command round trip. The same semantics are
+covered against the real BuildBox server by that repository's
+`apps/server/src/routes/devices.test.ts`, which cannot be run from here.
 
 ## Licence
 

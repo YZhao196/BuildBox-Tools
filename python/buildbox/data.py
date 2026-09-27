@@ -25,8 +25,10 @@ Two things this module is careful about, both of which the server enforces:
   to a module whose face draws a sweep; the server refuses it anywhere else. The
   functions here emit the shape the preset expects and no other.
 
-`PRESET_BUILDERS` maps every name in the catalogue to the function that feeds it,
-and `tests/test_data.py` fails if a preset is ever added without one.
+`PRESET_BUILDERS` maps every name in the mirrored list to the function that feeds
+it, and `tests/test_data.py` fails if one of them has no function. That list is
+generated from the product's catalogue and then committed, so a preset added on
+that side is invisible here until `scripts/sync_presets.py` is run again.
 """
 
 from __future__ import annotations
@@ -1219,10 +1221,13 @@ def builder_for(preset: str) -> Optional[Callable[..., List[Event]]]:
 
 
 def uncovered() -> List[str]:
-    """Catalogue presets with no entry at all — the check that keeps this honest.
+    """Presets in the mirrored list with no entry at all — the check that keeps this honest.
 
-    An empty list means every preset in the catalogue is either fed by a function
-    or explicitly recorded as not fed. `tests/test_data.py` asserts this.
+    An empty list means every preset in `presets.PRESETS` is either fed by a
+    function or explicitly recorded as not fed. `tests/test_data.py` asserts
+    this. That list is generated from the product's catalogue and then committed,
+    so this covers the presets in it — one added on the product side is invisible
+    here until `scripts/sync_presets.py` is run and its output committed.
     """
     return [name for _cat, name in PRESETS if name not in PRESET_BUILDERS]
 

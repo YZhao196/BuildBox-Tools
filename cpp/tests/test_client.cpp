@@ -2,9 +2,12 @@
 //
 //     g++ -std=c++17 -I../include test_client.cpp -o test_client && ./test_client
 //
-// The wire contract itself is exercised against the real server by
-// `apps/server/src/routes/devices.test.ts` and by the Python suite; what is
-// checked here is that this binding encodes and decodes it the same way.
+// The wire contract itself is exercised over a real socket by the management
+// library's suite (`management/tests/test_server.py`), which drives the Python
+// binding against a real receiver, and against the real BuildBox server by that
+// repository's `apps/server/src/routes/devices.test.ts` — a path in a checkout
+// this file cannot see, so it is named rather than depended on. What is checked
+// here is that this binding encodes and decodes the same contract.
 
 #include <buildbox/client.hpp>
 #include <buildbox/json.hpp>

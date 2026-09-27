@@ -1,9 +1,12 @@
 """The client's behaviour, tested against a stubbed transport.
 
 The transport is stubbed rather than a server being started, because what is
-being checked here is what the device decides and what it sends — the wire
-contract itself is exercised against the real server by
-``apps/server/src/routes/devices.test.ts``.
+being checked here is what the device decides and what it sends. The wire
+contract itself is exercised over a real socket by
+``management/tests/test_server.py``, which drives this client against a real
+receiver, and against the real BuildBox server by that repository's
+``apps/server/src/routes/devices.test.ts`` — a path in a checkout this suite
+cannot see, so it is named here rather than depended on.
 """
 
 from __future__ import annotations

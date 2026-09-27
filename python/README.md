@@ -196,14 +196,20 @@ python -m pytest
 
 No network and no server needed: the transport is stubbed, so the suite checks
 what the device decides and what it sends. The wire contract itself is exercised
-against a real server by the server's own suite
-(`apps/server/src/routes/devices.test.ts`), which covers token scope, ingest
-validation and the command round trip.
+in this repository by `management/tests/test_server.py`, which starts a real
+receiver and drives this client against it over a real socket — token scope,
+ingest validation, shape refusal and the command round trip. The same semantics
+are covered against the real BuildBox server by that repository's
+`apps/server/src/routes/devices.test.ts`, which cannot be run from here.
 
-One of these tests is a guarantee rather than a check: `tests/test_data.py` fails
-if a preset is added to the catalogue without a function in `buildbox.data` that
-feeds it. `scripts/sync_presets.py` regenerates the preset list both language
-bindings mirror, so the two cannot drift apart quietly.
+One test checks rather than exercises: `tests/test_data.py` fails if any preset
+in the list `buildbox.data` mirrors has no function to feed it. Be careful what
+that does and does not cover — the list is generated from the product's catalogue
+by `scripts/sync_presets.py` and then **committed**, so the guarantee holds for
+the presets *in that list*. Adding a preset to the product's catalogue is
+therefore a two-step change: run `sync_presets.py` against that checkout, then
+commit the regenerated list. Until you do, both repositories are green and the
+new preset simply has no sender here.
 
 ## Licence
 

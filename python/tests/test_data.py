@@ -1,10 +1,13 @@
-"""Every preset has a function, and every function produces a legal reading.
+"""Every preset in the mirrored list has a function, and every function produces a legal reading.
 
-The first test is the guarantee: if a preset is ever added to the catalogue and
-no builder is given to it, this fails. The rest check that what the builders
-produce is something the server will actually accept — a sample is a finite
-number, a shape names a shape the client can draw, a log line carries a severity
-it knows.
+The first test is the guarantee, and it is narrower than it sounds: it fails if a
+preset in `buildbox.presets.PRESETS` has no builder. That list is generated from
+the product's catalogue and then committed, so a preset added to the product's
+`catalog.ts` is absent from both sides here and this file stays green until
+`scripts/sync_presets.py` is run against that checkout and its output committed.
+The rest of the file checks that what the builders produce is something the
+server will actually accept — a sample is a finite number, a shape names a shape
+the client can draw, a log line carries a severity it knows.
 """
 
 from __future__ import annotations
