@@ -15,9 +15,13 @@ protocol they speak.
 
 Everything here is MIT-licensed. The **base** device library depends on nothing
 beyond the standard library (plus a serial driver if you want one), and so does the
-management library. **The bus readers are the exception** — CAN, I²C, SPI and ROS2
-each need a third-party library, and all of them sit behind the opt-in `drivers`
-extra, so a device that only reads a file still installs with nothing to compile.
+management library.
+
+**The bus readers are the exception, and they split two ways.** CAN and I²C come
+from the opt-in `drivers` extra (`python-can`, `smbus2`). SPI, GPIO and ROS2 need a
+library the extra **deliberately** does not carry — `spidev`, the board's own GPIO
+library, `rclpy` — because listing them would make the extra uninstallable on the
+machines that do not have them. Install those where you deploy.
 
 - **[`python/`](python/README.md)** — the device library, `pip install`-able.
 - **[`cpp/`](cpp/README.md)** — the device library, header-only, no dependencies.
