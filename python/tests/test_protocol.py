@@ -46,6 +46,15 @@ def specification_examples() -> Dict[str, Dict[str, Any]]:
 
 EXAMPLES = specification_examples()
 
+#: The other two ports, whose version constants say what a device announces.
+PORTS = {
+    "the management port": SPECIFICATION.parent.parent
+    / "management"
+    / "buildbox_management"
+    / "protocol.py",
+    "the C++ port": SPECIFICATION.parent.parent / "cpp" / "include" / "buildbox" / "client.hpp",
+}
+
 
 def a_client(monkeypatch, responses: Dict[str, Any]) -> Client:
     """A client whose transport answers from `responses`, keyed by path prefix."""
@@ -120,6 +129,29 @@ def test_the_specifications_command_reaches_a_device_intact(monkeypatch):
     assert command.timeout_ms == example["timeoutMs"]
     # The example is `run kill_switch 1`, which changes something.
     assert command.writes is True
+
+
+def test_every_port_announces_the_version_the_document_does():
+    """The document is the contract, so all three ports must name its version.
+
+    The other two are read as source text, because a Python test is the only
+    thing here that can read the document *and* look at them. It matters most for
+    the C++ one: `kVersion` is used consistently but was pinned by nothing, so a
+    bump that changed the document and the two Python constants while missing the
+    header would leave the entire C++ suite green while that binding announced a
+    version the document no longer describes.
+    """
+    declared = EXAMPLES["hello"]["v"]
+
+    assert protocol.VERSION == declared, "the device port disagrees with the document"
+
+    for name, path in PORTS.items():
+        source = path.read_text(encoding="utf-8")
+        found = {value for _name, value in re.findall(r'\b(VERSION|kVersion)\s*=\s*"([^"]+)"', source)}
+        assert found, f"No version constant found in {path}."
+        assert found == {declared}, (
+            f"{name} announces {sorted(found)}, the document says {declared}"
+        )
 
 
 def test_the_specifications_result_is_the_shape_this_port_sends_back(monkeypatch):
