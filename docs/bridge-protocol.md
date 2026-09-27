@@ -1,12 +1,15 @@
 # The Bridge Protocol
 
-Version `bbp/1`. This document is normative; the two implementations
-(`python/buildbox/protocol.py` and `cpp/include/buildbox/client.hpp`) are ports
-of it, and `packages/shared/src/bridge.ts` is its executable form.
+Version `bbp/1`. This document is normative. The implementations in this
+repository are ports of it, one per language per end: `python/buildbox/` and
+`cpp/include/buildbox/` are the device end — the program that runs on a robot —
+and `management/buildbox_management/` is the receiving end, the program the
+readings arrive at.
 
 It exists so that a device can be written in any language against one stable
-contract, rather than each integration being a new piece of software. Python and
-C++ ship today; a third binding is a port, not a project.
+contract, rather than each integration being a new piece of software. The device
+end ships in Python and C++ today, and the receiving end in Python; a further
+binding is a port, not a project.
 
 ---
 

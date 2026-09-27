@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "buildbox-management"
+# Read from `buildbox_management/_version.py` rather than repeated here, so the
+# version a receiver announces and the version pip reports cannot drift apart.
+dynamic = ["version"]
+description = "Receive readings from devices and command them: the other end of the bridge."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Yong Zhao" }]
+# No dependencies, deliberately — the same reason the device package has none.
+# This runs beside a robot's own program, often on a machine with no wheel for
+# its architecture, so it uses only the standard library's `http.server`, `json`
+# and `secrets`. It does not depend on the `buildbox` device package either: a
+# program that only receives should not have to install what a device runs, and
+# the two are ports of one protocol rather than one importing the other.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "buildbox"]
+
+[project.scripts]
+buildbox-management = "buildbox_management.__main__:main"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+
+[tool.setuptools.dynamic]
+version = { attr = "buildbox_management._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["buildbox_management*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

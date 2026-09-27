@@ -1,0 +1,66 @@
+# Everything these libraries need is in this repository, and this workflow is
+# what keeps that true.
+#
+# It checks out this repository and nothing else — no BuildBox, no catalogue, no
+# fixtures from anywhere. So if a library ever grew a dependency on the product,
+# these jobs would go red on the commit that introduced it rather than on the
+# day somebody tried to install the package somewhere else.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor both packages declare, so it is the one worth
+        # checking: a newer version would not notice a 3.10-only idiom creeping
+        # in. The newer one is what most people will actually run.
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install both libraries
+        # Installed rather than only put on the path, so a packaging mistake is
+        # a failure here and not a surprise for whoever pip installs it next.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest ./python ./management
+
+      - name: Test
+        # Runs both suites. The management suite drives a real receiver with the
+        # real device client over a real socket, which is the test that proves
+        # the two ends meet without BuildBox in the process.
+        run: python -m pytest
+
+      - name: Build the wheels
+        run: python -m pip wheel ./python ./management -w dist --no-deps
+
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cmake and ninja
+        # Both ship as wheels, so the C++ library needs only Python and a
+        # compiler — no system package manager and no vcpkg.
+        run: python -m pip install cmake ninja
+
+      - name: Configure, build and test
+        working-directory: cpp
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ctest --test-dir build --output-on-failure
