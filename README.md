@@ -8,12 +8,16 @@ The two ends of the bridge, and nothing else:
   machine, your own service. It receives those readings and sends those commands.
 
 They speak one protocol, so a device written against either end talks to the
-other. Neither needs BuildBox to be running: this repository exists so the bridge
-can be used by programs that have never heard of it.
+other. **Neither end needs BuildBox** — this repository exists so that a robot can
+be built against the bridge, and readings taken and commands sent, with nothing
+from the product in the process. That is the whole of it: the two ends, and the
+protocol they speak.
 
-Everything here is MIT-licensed. The device libraries depend on nothing beyond the
-standard library (plus a serial driver if you want one), and so does the
-management library.
+Everything here is MIT-licensed. The **base** device library depends on nothing
+beyond the standard library (plus a serial driver if you want one), and so does the
+management library. **The bus readers are the exception** — CAN, I²C, SPI and ROS2
+each need a third-party library, and all of them sit behind the opt-in `drivers`
+extra, so a device that only reads a file still installs with nothing to compile.
 
 - **[`python/`](python/README.md)** — the device library, `pip install`-able.
 - **[`cpp/`](cpp/README.md)** — the device library, header-only, no dependencies.
@@ -30,7 +34,7 @@ pip install "buildbox @ git+https://github.com/YZhao196/BuildBox-Tools#subdirect
 ```
 
 ```python
-from buildbox import Client, sensors
+from buildbox import Client, buses, sensors
 
 bb = Client("http://127.0.0.1:8787", token=TOKEN)
 
@@ -40,6 +44,11 @@ bb.sensor("temperature", sensors.file_number("/sys/class/thermal/thermal_zone0/t
                                              scale=1e-3),
           unit="C", every=2.0)
 
+# The buses a robot keeps its readings on are readers too. This one decodes a
+# signal out of the CAN frames carrying an id, and skips every other id.
+bb.sensor("wheel", buses.can_signal("can0", 0x123, start=2, length=2, scale=0.01),
+          unit="km/h", every=0.1)
+
 @bb.on_command(match="kill_switch")
 def kill_switch(command):
     if not stopped():
@@ -48,6 +57,27 @@ def kill_switch(command):
 
 bb.run()                # reads the sensors and answers commands
 ```
+
+Three modules make up the device's reading surface:
+
+- **`buildbox.sensors`** — what a machine exposes without help: `file_number` (a
+  number out of a file the kernel publishes) and `serial_line` (a line at a time
+  from a serial sensor, through pyserial).
+- **`buildbox.buses`** — the buses, where most of a robot's numbers live: `CAN`
+  (`can_signal`, `can_frames`), `I²C` (`i2c_register`), `SPI` (`spi_block`), `GPIO`
+  (`gpio_line`, `gpio_pulses`) and `ROS2` (`ros2_topic`, `ros2_laser_scan`,
+  `ros2_joint_state`).
+- **`buildbox.data`** — a builder for every kind of reading the product's 67
+  presets carry, so sending a laser sweep or a GPS fix is a call rather than a
+  field map.
+
+Every reader follows the same two rules: one that cannot read **raises**, naming
+what went wrong, so an unplugged probe shows as unplugged rather than as a steady
+zero; and one with nothing to report returns **`None`**, because waiting for a fix
+and being broken are different things. No hardware library is imported when
+`buildbox` is imported — each is imported on first use, so a device that only reads
+a file never needs `python-can`, and a missing one names its install rather than
+raising `ImportError`.
 
 ## Device — C++
 
