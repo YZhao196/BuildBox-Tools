@@ -131,6 +131,20 @@ def test_the_specifications_command_reaches_a_device_intact(monkeypatch):
     assert command.writes is True
 
 
+def test_the_documents_prose_names_the_version_its_examples_are_written_in():
+    """The version appears twice in the document, and the prose is the easy copy to miss.
+
+    Everything else here reads the JSON examples, so without this a bump applied
+    to the examples and every port still leaves the sentence at the top
+    announcing the old version.
+    """
+    opening = re.search(r"Version `(bbp/[^`]+)`", SPECIFICATION.read_text(encoding="utf-8"))
+    assert opening, "The document no longer opens by naming its version."
+    assert opening.group(1) == EXAMPLES["hello"]["v"], (
+        f"the prose says {opening.group(1)}, the examples say {EXAMPLES['hello']['v']}"
+    )
+
+
 def test_every_port_announces_the_version_the_document_does():
     """The document is the contract, so all three ports must name its version.
 
