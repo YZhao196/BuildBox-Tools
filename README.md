@@ -59,6 +59,7 @@ while (true) {
 
 ```bash
 pip install cmake ninja                     # both ship as wheels
+cd cpp
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ctest --test-dir build --output-on-failure
 ```
@@ -98,8 +99,8 @@ lists are committed, so you only need this if the catalogue has changed.
 ## Tests
 
 ```bash
-python -m pytest python/tests            # no network, no server
-ctest --test-dir build                   # after configuring, above
+python -m pytest                         # no network, no server
+ctest --test-dir cpp/build               # after configuring, above
 ```
 
 ## Licence

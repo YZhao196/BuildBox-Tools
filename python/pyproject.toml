@@ -45,3 +45,9 @@ include = ["buildbox*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `pythonpath` is relative to this file, so this makes the package importable
+# when pytest takes *this* as its configuration — which it does when you run
+# `python -m pytest python/tests` from the repository root, since that rootdir is
+# this directory. Without it that invocation fails while `cd python && pytest`
+# works, which is a confusing way to find out.
+pythonpath = ["."]
