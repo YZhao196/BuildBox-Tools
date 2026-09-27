@@ -6,7 +6,11 @@ Standard library only, so it installs on a robot with no wheel for its
 architecture and nothing to compile.
 
 ```bash
-pip install ./python          # from a checkout of this repository
+# From the public repository — no access to the product needed:
+pip install "buildbox @ git+https://github.com/YZhao196/BuildBox-Tools#subdirectory=python"
+
+# Or from a checkout, either repository:
+pip install ./python
 ```
 
 Not published to PyPI — `pip install buildbox` would fetch something else, or
