@@ -1,0 +1,6 @@
+@PACKAGE_INIT@
+
+# So a project can write find_package(BuildBox) and then link buildbox::buildbox.
+include("${CMAKE_CURRENT_LIST_DIR}/BuildBoxTargets.cmake")
+
+check_required_components(BuildBox)

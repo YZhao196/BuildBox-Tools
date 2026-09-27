@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "buildbox"
+# Read from `buildbox/_version.py` rather than repeated here, so the version a
+# device announces on the wire and the version pip reports cannot drift apart.
+dynamic = ["version"]
+description = "Report readings from a device and answer the commands it is sent."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+# No email: this field ends up on a public package page, and whether to publish
+# an address is the author's call rather than a packaging default.
+authors = [{ name = "Yong Zhao" }]
+# No dependencies, deliberately. This runs on a robot, often on a machine with no
+# wheel available for its architecture, so the only things it uses are the
+# standard library's `urllib`, `json` and `socket`. A dependency here is a
+# dependency on every device somebody wants to attach, and the API is small
+# enough that there is nothing worth taking one for.
+dependencies = []
+
+[project.optional-dependencies]
+# `buildbox doctor` is more useful when it can say whether the hardware libraries
+# this machine would need are actually importable. These are probed, never
+# required.
+drivers = ["pyserial>=3.5", "python-can>=4.0", "pymodbus>=3.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+buildbox = "buildbox.cli:main"
+
+[tool.setuptools]
+# So the wheel carries the licence rather than only naming it. PyPI shows this
+# file on the package page, and a distribution that declares MIT without the
+# text is a distribution nobody can safely use.
+license-files = ["LICENSE"]
+
+[tool.setuptools.dynamic]
+version = { attr = "buildbox._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["buildbox*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

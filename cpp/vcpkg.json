@@ -1,0 +1,13 @@
+{
+  "name": "buildbox",
+  "version": "0.1.0",
+  "description": "Report readings from a device and answer the commands it is sent. Header-only, no dependencies.",
+  "license": "MIT",
+  "dependencies": [],
+  "features": {
+    "tests": {
+      "description": "Build the client's tests",
+      "dependencies": []
+    }
+  }
+}
