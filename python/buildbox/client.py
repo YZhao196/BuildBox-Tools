@@ -116,8 +116,9 @@ class Result:
 #: What a handler may return: nothing, an exit code, some text, or a Result.
 Outcome = Union[None, bool, int, str, Sequence[str], Result]
 
-#: What a sensor may return: one number, or several readings at once.
-Reading = Union[float, int, Mapping[str, float], None]
+#: What a sensor may return: one number, several readings at once, or a
+#: structural reading already built by `buildbox.data`.
+Reading = Union[float, int, Mapping[str, float], Sequence[Dict[str, Any]], None]
 
 
 @dataclass
@@ -134,6 +135,9 @@ class Sensor:
     * a number — reported under `key`;
     * a mapping of name to number — reported as several series at once, which is
       what a device reading temperature *and* humidity wants;
+    * a list of events built by `buildbox.data` — a structural reading, because a
+      laser sweep or a joint pose is not a series of numbers and must not be sent
+      as one;
     * `None` — nothing to report yet, which is not a failure. A sensor with no
       fix and a sensor that is broken are different things and must not be
       reported the same way.
@@ -553,6 +557,19 @@ class Client:
                 for name, reading in value.items()
                 if reading is not None
             ]
+            return self.send(events, module=sensor.module) if events else 0
+
+        if isinstance(value, (list, tuple)):
+            # A structural reading, already built — a laser sweep is not a series
+            # of samples, so a reader hands over the events `buildbox.data` makes
+            # rather than a number this could wrap. A list of anything else is a
+            # mistake, and sending it would put nonsense on the wire.
+            events = list(value)
+            if not all(isinstance(event, dict) for event in events):
+                raise TypeError(
+                    "A reader returned a list that is not events. Return a number, "
+                    "a mapping of numbers, None, or a list built by buildbox.data."
+                )
             return self.send(events, module=sensor.module) if events else 0
 
         return self.send(

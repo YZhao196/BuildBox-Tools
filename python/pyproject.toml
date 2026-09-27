@@ -25,7 +25,13 @@ dependencies = []
 # `buildbox doctor` is more useful when it can say whether the hardware libraries
 # this machine would need are actually importable. These are probed, never
 # required.
-drivers = ["pyserial>=3.5", "python-can>=4.0", "pymodbus>=3.0"]
+#
+# `smbus2` joins them with the I²C reader in `buildbox.buses`; `pyserial` and
+# `python-can` now have readers too. `spidev` and the board-specific GPIO
+# libraries are deliberately absent: `spidev` is a C extension and
+# `RPi.GPIO`/`Jetson.GPIO` build only on their own board, so listing them would
+# make this extra uninstallable on the machine it is typed on.
+drivers = ["pyserial>=3.5", "python-can>=4.0", "pymodbus>=3.0", "smbus2>=0.4"]
 dev = ["pytest>=7"]
 
 [project.scripts]

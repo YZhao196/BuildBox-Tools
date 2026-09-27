@@ -12,7 +12,7 @@ Requires nothing but the standard library, so it installs on a robot with no
 wheel for its architecture and nothing to compile.
 """
 
-from . import data, presets, protocol, sensors
+from . import buses, data, presets, protocol, sensors
 from ._version import __version__
 from .client import (
     AuthError,
@@ -39,6 +39,7 @@ __all__ = [
     "ShapeError",
     "VERSION",
     "__version__",
+    "buses",
     "data",
     "interpret",
     "log",

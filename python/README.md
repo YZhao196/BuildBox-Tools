@@ -20,14 +20,19 @@ nothing. Install it from the repository, or from a wheel built out of it:
 python -m pip wheel ./python -w dist --no-deps
 ```
 
-Requires Python 3.9 or later, and nothing else. `buildbox doctor` reports which
-optional hardware libraries are importable on the machine it runs on; the
-`drivers` extra pulls the common ones — quoted, because the brackets are a glob
+Requires Python 3.9 or later, and nothing else — installing `buildbox` brings no
+hardware library and compiles nothing. `buildbox doctor` reports which optional
+libraries are importable on the machine it runs on; the `drivers` extra installs
+the ones that can be installed from pip — quoted, because the brackets are a glob
 to a shell otherwise:
 
 ```bash
 pip install "./python[drivers]"
 ```
+
+That covers serial, CAN and I²C. SPI needs `spidev`, and GPIO needs your board's
+own library (`RPi.GPIO`, `Jetson.GPIO`) — those build only on the machine they
+are for, so install them where you deploy rather than here.
 
 ## Reporting
 
@@ -108,8 +113,10 @@ bb.run()
 ```
 
 A reader may return a number, a **mapping** (a device reading temperature *and*
-humidity is one function returning both), or `None` for "nothing to report
-yet".
+humidity is one function returning both), a **list of events** built by
+`buildbox.data` when the reading has structure (a laser sweep or a joint pose is
+not a series of numbers, and sending it as one would draw something else), or
+`None` for "nothing to report yet".
 
 ### Two rules, and they matter more than the convenience
 
@@ -132,6 +139,51 @@ file — which is how thermal zones, voltages and fan speeds are read on a Pi.
 `sensors.serial_line(port, baudrate=, pattern=)` reads one line at a time from a
 serial sensor through pyserial, keeping the port open and reconnecting if it
 disappears.
+
+### Reading a bus
+
+`buildbox.buses` covers the buses a robot keeps its readings on, where writing
+the plumbing is the part that goes wrong quietly:
+
+```python
+from buildbox import Client, buses
+
+bb = Client()
+
+bb.sensor("wheel", buses.can_signal("can0", 0x123, start=2, length=2, scale=0.01),
+          unit="km/h", every=0.1)
+bb.sensor("bus_load", buses.can_frames("can0"), unit="frames/s", every=5.0)
+bb.sensor("tank", buses.i2c_register(1, 0x44, 0x00, length=2, scale=0.01), unit="m")
+bb.sensor("flow", buses.gpio_pulses(17), unit="Hz", every=1.0)
+bb.sensor("battery", buses.ros2_topic("/battery/state", "percentage"), unit="%")
+bb.sensor("scan", buses.ros2_laser_scan("/scan"), every=0.2)
+```
+
+- **CAN** — `can_signal(channel, can_id, start=, length=, scale=, …)` decodes one
+  signal out of the frames carrying an arbitration id, and skips every other id
+  rather than counting it. `can_frames(channel)` reports how loaded the bus is.
+- **I²C and SPI** — `i2c_register(bus, address, register, length=, …)` and
+  `spi_block(bus, device, length=, …)` read a block and turn it into the number the
+  datasheet describes, which is where a wrong byte order becomes a plausible
+  wrong reading.
+- **GPIO** — `gpio_line(pin, pull=, active_low=)` reads a level;
+  `gpio_pulses(pin, window=)` counts edges per second, which is how an encoder or
+  a flow meter is read.
+- **ROS2** — `ros2_topic(topic, field)` reads a field from the latest message on a
+  topic, following a dotted path like `"twist.linear.x"`. `ros2_laser_scan` and
+  `ros2_joint_state` return the structural readings the canvas draws.
+
+Two things hold across all of them, and they are the reason these exist rather
+than leaving you to write the plumbing. **A reader that cannot read raises** — a
+bus that will not open, a device that does not answer — naming what went wrong,
+so an unplugged sensor shows as unplugged rather than as a steady zero. And **a
+reader with nothing to report returns `None`** or, where silence is the
+measurement, zero: a CAN bus carrying no traffic is not a broken CAN bus, and an
+encoder at rest really is at rest.
+
+No hardware library is imported when `buildbox` is imported. Each is imported on
+first use, so a device that only reads a file never needs `python-can`, and a
+missing one names the install rather than raising an `ImportError`.
 
 ## Answering
 

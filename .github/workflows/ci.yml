@@ -32,9 +32,15 @@ jobs:
       - name: Install both libraries
         # Installed rather than only put on the path, so a packaging mistake is
         # a failure here and not a surprise for whoever pip installs it next.
+        #
+        # The `drivers` extra is installed too, and only for the tests. It brings
+        # python-can, whose **virtual bus** means the CAN reader is exercised for
+        # real here rather than skipped — the one hardware family that can be
+        # driven end to end on a machine with no vehicle attached. The brackets
+        # are quoted so the shell does not glob them.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest ./python ./management
+          python -m pip install pytest "./python[drivers]" ./management
 
       - name: Test
         # Runs both suites. The management suite drives a real receiver with the

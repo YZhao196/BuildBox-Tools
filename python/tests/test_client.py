@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from buildbox import Client, Command, Result, interpret
+from buildbox import Client, Command, Result, data, interpret
 from buildbox import protocol
 
 
@@ -301,3 +301,42 @@ def test_the_json_we_send_is_serialisable(recorder):
     client.send_data("temperature", 21.5)
     # A reading that cannot be serialised would fail at the socket, not here.
     json.dumps(recorder.calls[-1][2])
+
+
+# ------------------------------------------------------------------ #
+# What a reader may return                                            #
+# ------------------------------------------------------------------ #
+
+
+def test_a_reader_may_hand_back_a_structural_reading(recorder):
+    # A laser sweep is not a series of samples, so a reader returns the events
+    # `buildbox.data` builds and they go out as the shape they are.
+    client = make_client()
+    client.sensor("scan", lambda: data.laser_scan([1.0, 2.0], -1.57, 1.57), module="mod-1")
+
+    client.sample_once()
+
+    sent = recorder.calls[-1][2]["events"]
+    assert sent[0]["kind"] == "shape"
+    assert sent[0]["shape"] == "scan"
+    assert sent[0]["points"] == [1.0, 2.0]
+
+
+def test_a_reader_passing_off_a_plain_list_is_refused(recorder):
+    # Several numbers are said with a mapping; a bare list is a mistake, and
+    # sending it would put something on the wire nobody meant.
+    client = make_client()
+    client.sensor("junk", lambda: [1.0, 2.0], module="mod-1")
+
+    with pytest.raises(TypeError):
+        client.sample_once()
+
+
+def test_a_reader_may_return_nothing_to_report(recorder):
+    # A topic with no publisher yet is not a broken sensor, and must not send a
+    # number nobody measured — so nothing goes out at all.
+    client = make_client()
+    client.sensor("battery", lambda: None, module="mod-1")
+
+    assert client.sample_once() == 0
+    assert not [call for call in recorder.calls if call[1].endswith("/ingest")]
