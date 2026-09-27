@@ -1,9 +1,8 @@
 """The wire format, and the small amount of vocabulary that goes with it.
 
-The shapes here mirror ``packages/shared/src/bridge.ts`` field for field. That
-file is the authority; this is a port of it, and ``tests/test_protocol.py`` pulls
-the example messages out of the specification so the two cannot drift apart
-quietly.
+The shapes here mirror ``docs/bridge-protocol.md`` field for field. That document
+is normative and this is a port of it; ``tests/test_protocol.py`` pulls the
+example messages out of it so the two cannot drift apart quietly.
 """
 
 from __future__ import annotations

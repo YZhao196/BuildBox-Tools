@@ -357,7 +357,9 @@ class Management:
             return Response(200, {"accepted": 0})
 
         if parsed.get("type") != "events":
-            return _error(400, "malformed", "Expected a bbp/1 events batch.")
+            return _error(
+                400, "malformed", f"Expected a {protocol.VERSION} events batch."
+            )
         # A device is the thing that measured these numbers. Anything else is a
         # device claiming to be a model, which is the distinction the field exists
         # for — and this end sets the value it passes on, so a device cannot.
@@ -426,7 +428,7 @@ class Management:
             return parsed
 
         if parsed.get("v") != protocol.VERSION or parsed.get("type") != "result":
-            return _error(400, "malformed", "Expected a bbp/1 result.")
+            return _error(400, "malformed", f"Expected a {protocol.VERSION} result.")
         if not isinstance(parsed.get("cmdId"), str) or parsed.get("cmdId") == "":
             return _error(400, "malformed", "A result must name the command it answers.")
         if not isinstance(parsed.get("ok"), bool):

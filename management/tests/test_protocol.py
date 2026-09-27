@@ -2,9 +2,36 @@
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+from typing import Any, Dict
+
 import pytest
 
-from buildbox_management import protocol
+from buildbox_management import Management, protocol
+from buildbox_management.channel import new_command
+
+SPECIFICATION = Path(__file__).resolve().parents[2] / "docs" / "bridge-protocol.md"
+
+if not SPECIFICATION.exists():
+    pytest.skip(f"No specification at {SPECIFICATION}.", allow_module_level=True)
+
+
+def specification_examples() -> Dict[str, Dict[str, Any]]:
+    """Every JSON example in the specification, keyed by its `type`."""
+    text = SPECIFICATION.read_text(encoding="utf-8")
+    blocks = re.findall(r"```json\n(.*?)```", text, re.S)
+    assert blocks, f"No JSON examples found in {SPECIFICATION}."
+
+    examples: Dict[str, Dict[str, Any]] = {}
+    for block in blocks:
+        message = json.loads(block)
+        examples[message["type"]] = message
+    return examples
+
+
+EXAMPLES = specification_examples()
 
 
 def refusal(event):
@@ -137,3 +164,79 @@ def test_changing_actions_are_writes(action):
 
 def test_the_version_is_the_one_the_protocol_document_names():
     assert protocol.VERSION == "bbp/1"
+
+
+# ------------------------------------------------------------------ #
+# Against the specification itself                                   #
+# ------------------------------------------------------------------ #
+#
+# `docs/bridge-protocol.md` is normative and this is a port of it. These push
+# the document's own examples through the receiver, so a change to one that is
+# not made to the other fails here rather than quietly at a customer's site.
+
+
+def _post(management, path, token, message):
+    return management.handle(
+        "POST",
+        path,
+        headers={"authorization": f"Bearer {token}"},
+        body=json.dumps(message).encode("utf-8"),
+    )
+
+
+def test_the_receiver_speaks_the_version_the_examples_are_written_in():
+    for name in ("hello", "events", "command", "result"):
+        assert EXAMPLES[name]["v"] == protocol.VERSION, name
+
+
+def test_the_specifications_command_is_the_shape_this_receiver_sends():
+    example = EXAMPLES["command"]
+    built = new_command(
+        example["moduleId"],
+        example["action"],
+        cmd=example["cmd"],
+        target=example["target"],
+    ).as_dict()
+
+    # Exactly the fields — a receiver that invents wire format would send one
+    # the specification does not name, and fail here.
+    assert set(built) == set(example)
+    assert built["v"] == example["v"]
+
+
+def test_the_specifications_readings_are_accepted():
+    example = EXAMPLES["events"]
+    management = Management()
+    # The example carries a scan, so its module displays one.
+    management.add_module("proj-1", example["moduleId"], shapes=["scan"])
+    _, token = management.mint("proj-1", "rover", [example["moduleId"]])
+
+    response = _post(management, "/api/device/ingest", token, example)
+
+    assert response.status == 200
+    assert response.body == {"accepted": len(example["events"])}
+
+
+def test_the_specifications_hello_is_accepted():
+    example = EXAMPLES["hello"]
+    management = Management()
+    management.add_module("proj-1", "mod-temp")
+    _, token = management.mint("proj-1", "rover", ["mod-temp"])
+
+    response = _post(management, "/api/device/ingest", token, example)
+
+    assert response.status == 200
+
+
+def test_the_specifications_result_is_understood():
+    example = EXAMPLES["result"]
+    management = Management()
+    management.add_module("proj-1", "mod-temp")
+    _, token = management.mint("proj-1", "rover", ["mod-temp"])
+
+    response = _post(management, "/api/device/results", token, example)
+
+    # Nothing was waiting for that id, which is reported rather than refused —
+    # but the message itself was understood, which is what this checks.
+    assert response.status == 200
+    assert response.body["accepted"] is False
