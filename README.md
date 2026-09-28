@@ -19,9 +19,10 @@ management library.
 
 **The bus readers are the exception, and they split two ways.** CAN and I²C come
 from the opt-in `drivers` extra (`python-can`, `smbus2`). SPI, GPIO and ROS2 need a
-library the extra **deliberately** does not carry — `spidev`, the board's own GPIO
-library, `rclpy` — because listing them would make the extra uninstallable on the
-machines that do not have them. Install those where you deploy.
+library it **deliberately** does not carry — `spidev` and the board's own GPIO library,
+because listing those would make the extra uninstallable on the machines that lack
+them; and `rclpy`, which is not on pip at all and comes with a ROS2 distribution.
+Install the extra where you like, and the rest where you deploy.
 
 - **[`python/`](python/README.md)** — the device library, `pip install`-able.
 - **[`cpp/`](cpp/README.md)** — the device library, header-only, no dependencies.
