@@ -19,29 +19,47 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import protocol
 from .client import BuildBoxError, Client
 
-#: (library, what it would let this device do)
-OPTIONAL_LIBRARIES: List[Tuple[str, str]] = [
-    ("serial", "serial and UART ports"),
-    ("can", "CAN bus"),
-    ("pymodbus", "Modbus registers"),
-    ("gpiozero", "GPIO pins on a Raspberry Pi or Jetson"),
-    ("rclpy", "native ROS2 topics, services and parameters"),
-    ("smbus2", "I2C devices"),
-    ("spidev", "SPI devices"),
-    ("pynmea2", "NMEA sentences from a GPS"),
-    ("cv2", "camera frames"),
+#: (the modules that would satisfy this, what they would let this device do)
+#:
+#: Almost every entry is one module, and it is the module the reader imports —
+#: probing anything else would answer a question the readers do not ask. GPIO is
+#: the exception worth naming: the board decides which of `RPi.GPIO` and
+#: `Jetson.GPIO` the readers will import, they share an API, and either one is
+#: what "available" means here. Naming a single library would report the other
+#: board's machine as unable to read a pin it can read, which is the same lie as
+#: probing a library no reader uses.
+OPTIONAL_LIBRARIES: List[Tuple[Tuple[str, ...], str]] = [
+    (("serial",), "serial and UART ports"),
+    (("can",), "CAN bus"),
+    (("pymodbus",), "Modbus registers"),
+    (("RPi.GPIO", "Jetson.GPIO"), "GPIO pins on a Raspberry Pi or Jetson"),
+    (("rclpy",), "native ROS2 topics, services and parameters"),
+    (("smbus2",), "I2C devices"),
+    (("spidev",), "SPI devices"),
+    (("pynmea2",), "NMEA sentences from a GPS"),
+    (("cv2",), "camera frames"),
 ]
 
 
-def _probe_library(name: str) -> Tuple[str, str]:
-    """Whether an optional library is importable, and why not when it is not."""
-    try:
-        __import__(name)
-    except ImportError:
-        return "unavailable", "not installed"
-    except Exception as error:  # noqa: BLE001 - a broken install is a real answer
-        return "unavailable", f"installed but failed to load: {error}"
-    return "available", ""
+def _probe_library(names: Tuple[str, ...]) -> Tuple[str, str]:
+    """Whether any of these libraries is importable, and why not when none is.
+
+    A machine carries one GPIO library, not both, so the alternatives are tried
+    in turn and the first that imports is the answer. A library that is installed
+    but raises on import is not the same as one that is absent, and that reason is
+    kept in preference to "not installed" when nothing loads.
+    """
+    refusal = "not installed"
+    for name in names:
+        try:
+            __import__(name)
+        except ImportError:
+            continue
+        except Exception as error:  # noqa: BLE001 - a broken install is a real answer
+            refusal = f"installed but failed to load: {error}"
+            continue
+        return "available", ""
+    return "unavailable", refusal
 
 
 def _serial_ports() -> Tuple[str, str, List[str]]:
@@ -117,9 +135,9 @@ def doctor(client: Optional[Client], url: str) -> int:
         for module in identity.get("modules", []):
             rows.append(("module", "available", f"{module['name']} ({module['id']})", ""))
 
-    for name, description in OPTIONAL_LIBRARIES:
-        state, reason = _probe_library(name)
-        rows.append((name, state, description, reason))
+    for names, description in OPTIONAL_LIBRARIES:
+        state, reason = _probe_library(names)
+        rows.append((" / ".join(names), state, description, reason))
 
     ports_state, ports_reason, ports = _serial_ports()
     rows.append(("serial ports", ports_state, ", ".join(ports), ports_reason))
