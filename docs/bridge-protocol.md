@@ -174,9 +174,11 @@ decides whether an action was authorised.
 an operator can act on.
 
 **Delivery is at-least-once; exactly-once is not achievable and is not claimed.**
-A device keeps the `cmdId`s it has applied and treats a repeat as a no-op,
-answering success without repeating the work. That is what stops a redelivered
-command from firing a relay twice.
+A device keeps the `cmdId`s it has applied, with the result it reported for each,
+and treats a repeat as a no-op that replays the original result — `ok`, `output`,
+`code` and `reason` as first sent — without repeating the work. That is what stops
+a redelivered command from firing a relay twice, and a redelivered failure from
+being answered as a success.
 
 ---
 

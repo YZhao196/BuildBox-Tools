@@ -118,14 +118,40 @@ A handler that throws is reported as a failure. **A command no handler claims is
 reported as a failure too** — silently claiming success for work that did not
 happen is the one thing this must never do.
 
-Handlers are tried most-specific-first, so a catch-all registered for logging
-does not swallow the handlers declared after it.
+`on_command_match` matches **whole words**, case-insensitively: `"stop"` matches
+`sudo systemctl stop robot`, and `"home"` does not match `stop homebridge`.
+Handlers are tried most-specific-first — an action or a match beats a catch-all,
+and a longer match (in words) beats a shorter one — so a catch-all registered for
+logging does not swallow the handlers declared after it. A command that matches
+two equally specific handlers (`"stop"` and `"home"` both in `home then stop`) is
+**refused as ambiguous**, not given to whichever was registered first; registering
+the same match or action twice throws.
+
+A redelivered `cmdId` is not run again: the device replays the result it
+reported the first time, failure included.
 
 ## What it will not do
 
-- **Plain HTTP only.** This speaks `http://`. A deployment that needs TLS should
-  terminate it at a proxy; a URL starting `https://` is refused at construction
-  with that explanation rather than failing obscurely later.
+- **Plain HTTP only.** This speaks `http://`, and a URL starting `https://` is
+  refused at construction. To reach a hosted server, which is served over TLS,
+  either:
+  - run a **TLS-terminating proxy on the device itself**, listening on loopback
+    over plain HTTP and forwarding to the hosted server over HTTPS, with the
+    `Host` header rewritten to the hosted server's name, and point this client
+    at the proxy. For example, with Caddy:
+
+    ```sh
+    caddy reverse-proxy --from http://127.0.0.1:8787 \
+      --to https://buildbox.example.com --change-host-header
+    ```
+
+    ```cpp
+    buildbox::Client bb("http://127.0.0.1:8787", token);
+    ```
+
+    Keep the proxy on loopback: the hop between this client and the proxy is
+    unencrypted and carries the device token.
+  - or use the **Python client**, which speaks `https://` directly.
 - **It will not invent a success**, and it will not report on a module it was not
   scoped to.
 

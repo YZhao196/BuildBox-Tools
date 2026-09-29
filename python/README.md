@@ -216,8 +216,17 @@ A handler that raises is reported as a failure with the exception in the reason.
 silently claimed success for work it did not do would be lying to whoever pressed
 the button.
 
-Handlers are matched most-specific-first, so registering a catch-all for logging
-does not swallow the handlers declared after it.
+`match=` matches **whole words**, case-insensitively: `match="stop"` matches
+`sudo systemctl stop robot`, and `match="home"` does not match `stop homebridge`.
+Handlers are matched most-specific-first — an action or a match beats a
+catch-all, and a longer match (in words) beats a shorter one — so registering a
+catch-all for logging does not swallow the handlers declared after it. A command
+that matches two equally specific handlers is **refused as ambiguous** rather
+than given to whichever was declared first, and registering the same `action`
+and `match` twice is a `ValueError`.
+
+A redelivered `cmdId` is not run again: the device replays the result it
+reported the first time, failure included.
 
 If a device has nothing to do but be commanded, `bb.run_forever()` answers until
 it is stopped, reconnecting with a widening backoff when the network drops.

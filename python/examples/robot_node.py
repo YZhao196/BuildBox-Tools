@@ -30,7 +30,7 @@ import os
 import sys
 import time
 
-from buildbox import Client, Command, sensors
+from buildbox import Client, Command, Result, sensors
 
 SENSOR_PATH = os.environ.get("BUILDBOX_SENSOR", "/sys/class/thermal/thermal_zone0/temp")
 SENSOR_SCALE = float(os.environ.get("BUILDBOX_SENSOR_SCALE", "0.000001"))
@@ -55,7 +55,7 @@ bb.sensor("uptime", lambda: time.monotonic() - _uptime, unit="s", every=5.0)
 
 
 @bb.on_command(match="kill_switch")
-def kill_switch(command: Command) -> int:
+def kill_switch(command: Command) -> "int | Result":
     """Stop the machine. Returns an exit code, like the shell command it replaces.
 
     0 means it stopped; anything else means it did not, and the server reports
@@ -64,19 +64,49 @@ def kill_switch(command: Command) -> int:
     stopped something it did not is the most dangerous thing this could do.
     """
     global STOPPED
-    if "1" in command.cmd:
+    if command.matches("1"):
         STOPPED = True
         bb.send_status("idle")
         bb.send_log("stopped on request", "warn")
         return 0
-    return 1
+    return Result(ok=False, code=1, reason="Not stopped: expected “kill_switch 1”.")
+
+
+def home_axes() -> bool:
+    """Drive every axis to its limit switch; True only once they are all there.
+
+    Replace this with your motion controller's homing routine. This example has
+    no axes, so it cannot home anything, and says so.
+    """
+    return False
+
+
+@bb.on_command(match="home")
+def home(command: Command) -> Result:
+    """Home the machine. Success only when the axes report they are home."""
+    if home_axes():
+        bb.send_status("homed")
+        return Result(ok=True, code=0, output=["homed"])
+    return Result(
+        ok=False,
+        code=1,
+        reason="Not homed: home_axes() is not wired to a motion controller on this device.",
+    )
 
 
 @bb.on_command
-def anything_else(command: Command) -> str:
-    """Everything that is not a kill switch, so nothing arrives unhandled."""
+def anything_else(command: Command) -> Result:
+    """Everything else is logged and refused, never acknowledged as done.
+
+    Answering success here would tell whoever pressed the button that something
+    happened when nothing did.
+    """
     bb.send_log(f"asked to {command.action}: {command.cmd}", "info")
-    return f"acknowledged {command.action}"
+    return Result(
+        ok=False,
+        code=1,
+        reason=f"This device has no handler for “{command.action}: {command.cmd}”. Nothing was done.",
+    )
 
 
 def main() -> int:

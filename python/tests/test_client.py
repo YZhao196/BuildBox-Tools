@@ -120,11 +120,81 @@ def test_the_envelope_always_claims_to_be_a_device():
 # ------------------------------------------------------------------ #
 
 
-def test_matching_is_a_substring_and_ignores_case():
+def test_matching_is_by_whole_word_and_ignores_case():
     command = Command("c1", "m", "run", "sudo systemctl stop robot")
     assert command.matches("stop")
     assert command.matches("SYSTEMCTL")
+    assert command.matches("stop robot")
     assert not command.matches("start")
+    # A word inside another word is not that word.
+    assert not command.matches("sto"), "a fragment of a word must not match"
+    assert not Command("c", "m", "run", "stop homebridge").matches("home"), (
+        "'home' must not match inside 'homebridge'"
+    )
+
+
+def test_a_stop_command_mentioning_home_does_not_reach_the_homing_handler():
+    client = make_client()
+
+    # Registered first, so substring matching with registration-order ties
+    # would hand it a stop.
+    @client.on_command(match="home")
+    def homing(command):
+        return "homing"
+
+    @client.on_command(match="stop")
+    def stop(command):
+        return "stopped"
+
+    result = client.dispatch(Command("c", "m", "run", "sudo systemctl stop homebridge"))
+    assert result.output == ["stopped"], f"stop went to {result.output!r}"
+
+
+def test_the_longest_match_wins_and_an_equal_tie_is_refused():
+    client = make_client()
+
+    @client.on_command(match="stop")
+    def stop(command):
+        return "stop"
+
+    @client.on_command(match="stop home")
+    def stop_home(command):
+        return "stop home"
+
+    @client.on_command(match="home")
+    def home(command):
+        return "home"
+
+    assert client.dispatch(Command("c", "m", "run", "stop home now")).output == ["stop home"]
+    # Two handlers, equally specific, both named: guessing is worse than saying so.
+    tie = client.dispatch(Command("c", "m", "run", "home then stop"))
+    assert tie.ok is False, "an equal tie must be refused, not settled by registration order"
+    assert "ambiguous" in (tie.reason or "")
+
+
+def test_a_failure_without_a_reason_is_given_one_naming_the_exit_code():
+    client = make_client()
+
+    @client.on_command(match="stop")
+    def stop(command):
+        return 3
+
+    @client.on_command(match="home")
+    def home(command):
+        return Result(ok=False)
+
+    coded = client.dispatch(Command("c", "m", "run", "stop"))
+    assert coded.ok is False
+    assert coded.reason and "3" in coded.reason, f"no reason naming the exit code: {coded.reason!r}"
+    bare = client.dispatch(Command("c", "m", "run", "home"))
+    assert bare.reason, "a failure must carry a reason (bridge-protocol.md)"
+
+
+def test_registering_the_same_match_twice_is_an_error():
+    client = make_client()
+    client.on_command(match="stop")(lambda command: 0)
+    with pytest.raises(ValueError):
+        client.on_command(match="STOP")(lambda command: 0)
 
 
 def test_an_action_knows_whether_it_writes():
@@ -246,9 +316,28 @@ def test_an_applied_command_is_not_applied_twice(recorder):
     # a second time.
     assert seen == ["c1"]
 
-    second_result = [call for call in recorder.calls if call[1].endswith("/results")][-1][2]
-    assert second_result["ok"] is True
-    assert "not repeated" in second_result["output"][0]
+    first, second = [call[2] for call in recorder.calls if call[1].endswith("/results")]
+    assert second == first
+
+
+def test_a_redelivered_failure_replays_the_failure(recorder):
+    client = make_client()
+    seen = []
+
+    @client.on_command
+    def handle(command):
+        seen.append(command.cmd_id)
+        return Result(ok=False, reason="the relay did not move", code=2)
+
+    command = Command("c2", "m", "run", "stop")
+    client.apply(command)
+    client.apply(command)
+
+    assert seen == ["c2"]
+    second = [call[2] for call in recorder.calls if call[1].endswith("/results")][-1]
+    assert second["ok"] is False, "a redelivered failure must not be answered as a success"
+    assert second["reason"] == "the relay did not move"
+    assert second["code"] == 2
 
 
 def test_apply_reports_a_failure_with_its_reason(recorder):

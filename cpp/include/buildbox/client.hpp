@@ -16,8 +16,8 @@
 // Header-only and dependency-free, on purpose. A robot's build is the last
 // place to introduce a library, and the protocol needs so little that a socket
 // and a small JSON value are the whole of it. That does mean plain HTTP only:
-// this speaks `http://`, and a deployment that needs TLS should terminate it at
-// a proxy rather than expecting this to grow a TLS stack.
+// this speaks `http://`, and reaching a TLS (hosted) server takes a
+// TLS-terminating proxy on the device's loopback — see cpp/README.md.
 //
 // The two rules the Python binding is built around hold here too, because the
 // server enforces them either way: a write is never invented, and readings are
@@ -26,6 +26,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -33,6 +34,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "buildbox/json.hpp"
@@ -143,23 +145,35 @@ struct Command {
   std::string target;
   int timeout_ms = 30000;
 
-  /// Whether the command text contains `text`, case-insensitively.
-  ///
-  /// Substring rather than equality because the command field is free text a
-  /// person typed — `sudo systemctl stop robot` should reach a handler for
-  /// `stop` without the operator knowing this library's rules.
-  bool matches(const std::string& text) const {
-    std::string haystack;
-    haystack.reserve(cmd.size());
-    for (char character : cmd) {
-      haystack += static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-    }
-    std::string needle;
-    needle.reserve(text.size());
+  /// The lower-cased words of `text`: runs of letters, digits and underscores,
+  /// so `kill_switch` is one word and `stop-robot` is two.
+  static std::vector<std::string> words(const std::string& text) {
+    std::vector<std::string> found;
+    std::string word;
     for (char character : text) {
-      needle += static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+      const unsigned char byte = static_cast<unsigned char>(character);
+      if (std::isalnum(byte) || character == '_') {
+        word += static_cast<char>(std::tolower(byte));
+      } else if (!word.empty()) {
+        found.push_back(std::move(word));
+        word.clear();
+      }
     }
-    return haystack.find(needle) != std::string::npos;
+    if (!word.empty()) found.push_back(std::move(word));
+    return found;
+  }
+
+  /// Whether the command text contains the words of `text`, in order.
+  ///
+  /// Whole words, case-insensitively: `sudo systemctl stop robot` matches
+  /// `stop` and `stop robot`, but `stop homebridge` does not match `home` — a
+  /// substring would hand a stop to a homing handler.
+  bool matches(const std::string& text) const {
+    const std::vector<std::string> needle = words(text);
+    const std::vector<std::string> haystack = words(cmd);
+    if (needle.empty()) return false;
+    return std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end()) !=
+           haystack.end();
   }
 
   /// Whether this only observes. Writes have already been confirmed server-side.
@@ -253,8 +267,11 @@ struct Url {
 inline void require_plain_http(const std::string& url) {
   if (url.rfind("https://", 0) == 0) {
     throw BuildBoxError(
-        "This client speaks plain HTTP only. Terminate TLS at a proxy, or use the "
-        "Python binding with a TLS-capable client.");
+        "This client speaks plain HTTP only and cannot reach " + url +
+        " directly: it has no TLS. Run a TLS-terminating proxy on this device that "
+        "listens on http://127.0.0.1:<port>, forwards to the https:// server with the "
+        "Host header rewritten to it, and point this client at the proxy; or use the "
+        "Python client, which speaks https. See cpp/README.md, \"What it will not do\".");
   }
 }
 
@@ -499,18 +516,28 @@ class Client {
   /* ---------------------------------------------------------------- */
 
   /// Handle every command.
-  void on_command(Handler handler) { handlers_.push_back({0, nullptr, std::move(handler)}); }
+  ///
+  /// Handlers are tried most-specific-first: an action or a match beats a
+  /// catch-all, and a longer match (in words) beats a shorter one. A command
+  /// left matching two equally specific handlers is ambiguous and is refused,
+  /// not given to whichever was registered first. Registering the same thing
+  /// twice throws.
+  void on_command(Handler handler) { add("*", nullptr, 0, std::move(handler)); }
 
   /// Handle commands with this action (`read`, `run`, `publish`…).
   void on_command_action(const std::string& action, Handler handler) {
-    handlers_.push_back({1, [action](const Command& command) { return command.action == action; },
-                         std::move(handler)});
+    add("action:" + action, [action](const Command& command) { return command.action == action; },
+        0, std::move(handler));
   }
 
-  /// Handle commands whose text contains `text`.
+  /// Handle commands whose text contains the words of `text`, in order.
   void on_command_match(const std::string& text, Handler handler) {
-    handlers_.push_back({1, [text](const Command& command) { return command.matches(text); },
-                         std::move(handler)});
+    const std::vector<std::string> needle = Command::words(text);
+    if (needle.empty()) throw BuildBoxError("\"" + text + "\" has no words to match on.");
+    std::string key = "match:";
+    for (const std::string& word : needle) key += " " + word;
+    add(key, [text](const Command& command) { return command.matches(text); },
+        static_cast<int>(needle.size()), std::move(handler));
   }
 
   /// Wait for the next command, or return nothing when the wait elapses.
@@ -534,14 +561,18 @@ class Client {
   /// Run a command and report what happened, exactly once.
   Result apply(const Command& command) {
     Result result;
-    const bool already = std::find(applied_.begin(), applied_.end(), command.cmd_id) != applied_.end();
-    if (already) {
+    const auto already = std::find_if(applied_.begin(), applied_.end(),
+                                      [&command](const std::pair<std::string, Result>& entry) {
+                                        return entry.first == command.cmd_id;
+                                      });
+    if (already != applied_.end()) {
       // The transport is at-least-once, so a redelivery must not fire a relay a
-      // second time. Answering "already done" is not a lie: it was done.
-      result = Result::success({"Already applied; not repeated."});
+      // second time, and answering success would hide a failure. The original
+      // result is replayed.
+      result = already->second;
     } else {
       result = dispatch(command);
-      applied_.push_back(command.cmd_id);
+      applied_.emplace_back(command.cmd_id, result);
       if (applied_.size() > 512) applied_.erase(applied_.begin(), applied_.begin() + 256);
     }
 
@@ -594,41 +625,75 @@ class Client {
     on_error_ = std::move(handler);
   }
 
+  /// How a request reaches the server. `detail::exchange` unless replaced — a
+  /// test replaces it to see what would be sent without a server.
+  using Transport = std::function<HttpResponse(const std::string& method, const std::string& url,
+                                               const std::string& token, const std::string& body,
+                                               int timeout_seconds)>;
+  void set_transport(Transport transport) { transport_ = std::move(transport); }
+
+  /// Find the handler for a command and run it, or say there is none.
+  Result dispatch(const Command& command) {
+    // The most specific match wins, so a catch-all registered for logging does
+    // not swallow the handlers declared after it. An equal tie is refused.
+    std::vector<const Registered*> winners;
+    for (const Registered& entry : handlers_) {
+      if (entry.predicate && !entry.predicate(command)) continue;
+      if (!winners.empty() && entry.rank < winners[0]->rank) continue;
+      if (!winners.empty() && winners[0]->rank < entry.rank) winners.clear();
+      winners.push_back(&entry);
+    }
+
+    // No handler is a refusal, not a success.
+    if (winners.empty()) {
+      return Result::failure("This device has no handler for \"" + command.action +
+                             "\". Nothing was done.");
+    }
+    if (winners.size() > 1) {
+      // Guessing between, say, a stop and a homing handler is worse than doing
+      // nothing and saying why.
+      std::string named;
+      for (const Registered* entry : winners) named += (named.empty() ? "" : ", ") + entry->key;
+      return Result::failure("The command is ambiguous: it matches " + named +
+                             " equally. Nothing was done.");
+    }
+    try {
+      Result result = winners[0]->handler(command);
+      if (!result.ok && result.reason.empty()) {
+        // The protocol requires a reason with every failure; a bare exit code is
+        // still worth naming rather than leaving the operator blank.
+        result.reason = "The handler reported failure" +
+                        (result.code >= 0 ? " with exit code " + std::to_string(result.code) : "") +
+                        " and gave no reason.";
+      }
+      return result;
+    } catch (const std::exception& error) {
+      // A handler that threw did not do the thing. Saying so is the point.
+      return Result::failure(std::string("handler threw: ") + error.what());
+    }
+  }
+
  private:
   struct Registered {
-    int specificity;
+    std::string key;                                // unique: "*", "action:run", "match: stop"
+    std::pair<int, int> rank;                       // (constraints named, words matched)
     std::function<bool(const Command&)> predicate;  // null means "anything"
     Handler handler;
   };
 
-  Result dispatch(const Command& command) {
-    // Most specific first, so registering a catch-all for logging does not
-    // quietly swallow every handler declared after it.
-    std::vector<const Registered*> ordered;
-    for (const Registered& entry : handlers_) ordered.push_back(&entry);
-    std::stable_sort(ordered.begin(), ordered.end(),
-                     [](const Registered* a, const Registered* b) {
-                       return a->specificity > b->specificity;
-                     });
-
-    for (const Registered* entry : ordered) {
-      if (entry->predicate && !entry->predicate(command)) continue;
-      try {
-        return entry->handler(command);
-      } catch (const std::exception& error) {
-        // A handler that threw did not do the thing. Saying so is the point.
-        return Result::failure(std::string("handler threw: ") + error.what());
-      }
+  void add(std::string key, std::function<bool(const Command&)> predicate, int words,
+           Handler handler) {
+    for (const Registered& entry : handlers_) {
+      if (entry.key == key) throw BuildBoxError("A handler for " + key + " is already registered.");
     }
-
-    // No handler is a refusal, not a success.
-    return Result::failure("This device has no handler for \"" + command.action +
-                           "\". Nothing was done.");
+    const int constraints = predicate ? 1 : 0;
+    handlers_.push_back({std::move(key), {constraints, words}, std::move(predicate),
+                         std::move(handler)});
   }
 
   Json get(const std::string& path, int timeout_seconds, bool allow_empty = false) {
     const HttpResponse response =
-        detail::exchange("GET", url_ + path, token_, "", timeout_seconds);
+        transport_("GET", url_ + path, token_, "", timeout_seconds);
     if (allow_empty && response.status == 204) return Json(nullptr);
     check_status(response, path);
     if (response.body.empty()) return Json(nullptr);
@@ -637,7 +702,7 @@ class Client {
 
   Json post(const std::string& path, const Json& payload) {
     const HttpResponse response =
-        detail::exchange("POST", url_ + path, token_, payload.dump(), 30);
+        transport_("POST", url_ + path, token_, payload.dump(), 30);
     check_status(response, path);
     if (response.body.empty()) return Json(nullptr);
     return Json::parse(response.body);
@@ -666,8 +731,9 @@ class Client {
   std::string token_;
   std::string module_;
   std::vector<Registered> handlers_;
-  std::vector<std::string> applied_;
+  std::vector<std::pair<std::string, Result>> applied_;
   std::function<void(const std::string&)> on_error_;
+  Transport transport_ = detail::exchange;
 };
 
 }  // namespace buildbox

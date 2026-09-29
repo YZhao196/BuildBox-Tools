@@ -81,9 +81,14 @@ void test_commands() {
   command.action = "run";
   command.cmd = "sudo systemctl stop robot";
 
-  check("matching is a substring", command.matches("stop"));
+  check("matching finds a whole word", command.matches("stop"));
   check("matching ignores case", command.matches("SYSTEMCTL"));
+  check("matching finds words in order", command.matches("stop robot"));
   check("matching rejects what is absent", !command.matches("start"));
+  check("a fragment of a word does not match", !command.matches("sto"));
+  buildbox::Command homebridge;
+  homebridge.cmd = "stop homebridge";
+  check("'home' does not match inside 'homebridge'", !homebridge.matches("home"));
 
   command.action = "read";
   check("read is a read", command.reads());
@@ -122,6 +127,84 @@ void test_client_construction() {
   check("TLS is refused with an explanation", threw);
 }
 
+buildbox::Command make_command(const std::string& id, const std::string& text) {
+  buildbox::Command command;
+  command.cmd_id = id;
+  command.module_id = "m";
+  command.action = "run";
+  command.cmd = text;
+  return command;
+}
+
+std::string first_line(const buildbox::Result& result) {
+  return result.output.empty() ? "" : result.output[0];
+}
+
+void test_routing() {
+  std::cout << "\nrouting\n";
+  buildbox::Client client("http://example.test", "token", "m");
+  // Registered first, so substring matching with registration-order ties
+  // would hand it a stop.
+  client.on_command_match("home", [](const buildbox::Command&) { return buildbox::Result::text("home"); });
+  client.on_command_match("stop", [](const buildbox::Command&) { return buildbox::Result::text("stop"); });
+  client.on_command_match("stop home", [](const buildbox::Command&) {
+    return buildbox::Result::text("stop home");
+  });
+
+  const buildbox::Result stop = client.dispatch(make_command("c", "sudo systemctl stop homebridge"));
+  check("a stop mentioning homebridge reaches the stop handler", first_line(stop) == "stop",
+        "went to '" + first_line(stop) + "'");
+  check("the longest match wins",
+        first_line(client.dispatch(make_command("c", "stop home now"))) == "stop home");
+
+  const buildbox::Result tie = client.dispatch(make_command("c", "home then stop"));
+  check("an equal tie is refused, not settled by registration order",
+        !tie.ok && tie.reason.find("ambiguous") != std::string::npos, tie.reason);
+
+  buildbox::Client coded("http://example.test", "token", "m");
+  coded.on_command([](const buildbox::Command&) { return buildbox::Result::exit_code(3); });
+  const buildbox::Result failed = coded.dispatch(make_command("c", "anything"));
+  check("a failure without a reason is given one naming the exit code",
+        !failed.ok && failed.reason.find('3') != std::string::npos, failed.reason);
+
+  bool threw = false;
+  try {
+    client.on_command_match("STOP", [](const buildbox::Command&) { return buildbox::Result::success(); });
+  } catch (const buildbox::BuildBoxError&) {
+    threw = true;
+  }
+  check("registering the same match twice is an error", threw);
+}
+
+void test_redelivery() {
+  std::cout << "\nredelivery\n";
+  buildbox::Client client("http://example.test", "token", "m");
+  std::vector<std::string> posted;
+  client.set_transport([&posted](const std::string&, const std::string&, const std::string&,
+                                 const std::string& body, int) {
+    posted.push_back(body);
+    buildbox::HttpResponse response;
+    response.status = 200;
+    return response;
+  });
+  int runs = 0;
+  client.on_command([&runs](const buildbox::Command&) {
+    ++runs;
+    buildbox::Result result = buildbox::Result::failure("the relay did not move");
+    result.code = 2;
+    return result;
+  });
+
+  const buildbox::Command command = make_command("c2", "stop");
+  client.apply(command);
+  const buildbox::Result again = client.apply(command);
+
+  check("a redelivered command is not run twice", runs == 1);
+  check("a redelivered failure is not answered as a success", !again.ok);
+  check("the original reason is replayed", again.reason == "the relay did not move", again.reason);
+  check("the same report is sent both times", posted.size() == 2 && posted[0] == posted[1]);
+}
+
 }  // namespace
 
 int main() {
@@ -131,6 +214,8 @@ int main() {
   test_commands();
   test_results();
   test_client_construction();
+  test_routing();
+  test_redelivery();
 
   std::cout << "\n" << (failures == 0 ? "ALL TESTS PASSED" : std::to_string(failures) + " FAILED")
             << "\n";

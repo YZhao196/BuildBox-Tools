@@ -50,11 +50,30 @@ int main() {
       stopped = true;
       return buildbox::Result::exit_code(0);
     }
-    return buildbox::Result::exit_code(1);
+    buildbox::Result result = buildbox::Result::exit_code(1);
+    result.reason = "Not stopped: expected \"kill_switch 1\".";
+    return result;
   });
 
+  // Replace `home_axes` with your motion controller's homing routine. This
+  // example has no axes, so it cannot home anything, and says so.
+  const auto home_axes = []() { return false; };
+  bb.on_command_match("home", [&home_axes](const buildbox::Command&) {
+    if (home_axes()) return buildbox::Result::exit_code(0);
+    buildbox::Result result =
+        buildbox::Result::failure("Not homed: home_axes() is not wired to a motion controller.");
+    result.code = 1;
+    return result;
+  });
+
+  // Everything else is refused, never acknowledged as done: answering success
+  // would tell whoever pressed the button that something happened when nothing did.
   bb.on_command([](const buildbox::Command& command) {
-    return buildbox::Result::text("acknowledged " + command.action);
+    buildbox::Result result = buildbox::Result::failure(
+        "This device has no handler for \"" + command.action + ": " + command.cmd +
+        "\". Nothing was done.");
+    result.code = 1;
+    return result;
   });
 
   try {

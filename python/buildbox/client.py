@@ -35,11 +35,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
@@ -49,6 +51,16 @@ from .protocol import READ_ACTIONS
 
 DEFAULT_URL = os.environ.get("BUILDBOX_URL", "http://127.0.0.1:8787")
 DEFAULT_TOKEN = os.environ.get("BUILDBOX_TOKEN")
+
+#: A word in a command: letters, digits and underscores, so ``kill_switch`` is
+#: one word and ``stop-robot`` is two.
+_WORD = re.compile(r"[a-z0-9_]+")
+
+
+def words(text: Optional[str]) -> tuple:
+    """The lower-cased words of ``text``, which is what matching compares."""
+    return tuple(_WORD.findall((text or "").lower()))
+
 
 #: A long poll returns within its wait, so the socket needs to outlast it.
 POLL_SLACK_SECONDS = 10.0
@@ -91,13 +103,20 @@ class Command:
         return not self.reads
 
     def matches(self, text: str) -> bool:
-        """Whether the command text contains ``text``, case-insensitively.
+        """Whether the command text contains the words of ``text``, in order.
 
-        Substring rather than equality because the command field is free text a
-        person typed — ``sudo systemctl stop robot`` should match a handler for
-        ``stop`` without the operator having to know this library's rules.
+        Whole words, case-insensitively: ``sudo systemctl stop robot`` matches
+        ``stop`` and ``stop robot``, but ``stop homebridge`` does not match
+        ``home`` — a substring would hand a stop to a homing handler.
         """
-        return text.lower() in (self.cmd or "").lower()
+        needle = words(text)
+        haystack = words(self.cmd)
+        if not needle:
+            return False
+        return any(
+            haystack[i : i + len(needle)] == needle
+            for i in range(len(haystack) - len(needle) + 1)
+        )
 
     def __str__(self) -> str:  # pragma: no cover - convenience only
         return f"<command {self.action} on {self.module_id}: {self.cmd!r}>"
@@ -213,19 +232,21 @@ class Client:
         self.on_error = on_error
 
         self._module = module
-        #: (specificity, predicate, handler). Specificity is how many constraints
-        #: the handler named; the most constrained match wins rather than the
-        #: first registered, because registering a catch-all — for logging, say —
-        #: should not quietly swallow every specific handler declared after it.
+        #: (rank, key, predicate, handler). Rank is (constraints named, words in
+        #: the match): the highest-ranked match wins, so a catch-all registered
+        #: for logging does not swallow the specific handlers after it, and an
+        #: equal tie is refused rather than settled by registration order. Key
+        #: is (action, match words), which must be unique.
         self._handlers: List[
-            tuple[int, Callable[[Command], bool], Callable[[Command], Outcome]]
+            tuple[tuple[int, int], tuple, Callable[[Command], bool], Callable[[Command], Outcome]]
         ] = []
         #: What this device reads, and how often.
         self._sensors: List[Sensor] = []
-        #: The ids this device has already applied, so a redelivered command is
-        #: not applied twice. The transport gives at-least-once and nothing
-        #: better is honestly achievable, so doing the work once is this end's job.
-        self._applied: List[str] = []
+        #: What each applied command id came to, so a redelivered command is not
+        #: applied twice and is answered with its original result. The transport
+        #: gives at-least-once and nothing better is honestly achievable, so
+        #: doing the work once is this end's job.
+        self._applied: "OrderedDict[str, Result]" = OrderedDict()
         self._applied_limit = 512
 
     # ---------------------------------------------------------------- #
@@ -373,10 +394,20 @@ class Client:
             @bb.on_command(action="run")         # only writes
             @bb.on_command(match="kill_switch")  # only commands naming it
 
-        Handlers are tried most-specific-first, so a handler naming an action or
-        a command text wins over one that names neither, whichever order they
-        were declared in.
+        Handlers are tried most-specific-first: more constraints win, then the
+        longer ``match`` in words. ``match`` is by whole word, so
+        ``match="home"`` does not catch ``stop homebridge``. A command left
+        matching two equally specific handlers is ambiguous and is refused,
+        not given to whichever was declared first. Registering the same
+        ``action`` and ``match`` twice is a ValueError.
         """
+        if match is not None and not words(match):
+            raise ValueError(f"match={match!r} has no words to match on.")
+        key = (action, words(match) if match is not None else None)
+        if any(entry[1] == key for entry in self._handlers):
+            raise ValueError(
+                f"A handler for action={action!r}, match={match!r} is already registered."
+            )
 
         def register(handler: Callable[[Command], Outcome]) -> Callable[[Command], Outcome]:
             def predicate(command: Command) -> bool:
@@ -386,34 +417,47 @@ class Client:
                     return False
                 return True
 
-            specificity = (1 if action is not None else 0) + (1 if match is not None else 0)
-            self._handlers.append((specificity, predicate, handler))
+            rank = (
+                (1 if action is not None else 0) + (1 if match is not None else 0),
+                len(key[1] or ()),
+            )
+            self._handlers.append((rank, key, predicate, handler))
             return handler
 
         return register(fn) if fn is not None else register
 
     def dispatch(self, command: Command) -> Result:
         """Find the handler for a command and run it, or say there is none."""
-        # Sorted rather than reordered in place, so registration order still
-        # decides between two handlers that are equally specific.
-        for _specificity, predicate, handler in sorted(
-            self._handlers, key=lambda entry: -entry[0]
-        ):
-            if not predicate(command):
-                continue
-            try:
-                return interpret(handler(command))
-            except Exception as error:  # noqa: BLE001 - reported, not swallowed
-                # A handler that raised did not do the thing. Saying so is the
-                # whole point; the traceback is the operator's, in their log.
-                return Result(ok=False, reason=f"{type(error).__name__}: {error}")
-
-        # No handler is a refusal, not a success. A command that silently
-        # reported ok would tell the interface something happened that did not.
-        return Result(
-            ok=False,
-            reason=f"This device has no handler for “{command.action}”. Nothing was done.",
-        )
+        candidates = [entry for entry in self._handlers if entry[2](command)]
+        if not candidates:
+            # No handler is a refusal, not a success. A command that silently
+            # reported ok would tell the interface something happened that did not.
+            return Result(
+                ok=False,
+                reason=f"This device has no handler for “{command.action}”. Nothing was done.",
+            )
+        best = max(entry[0] for entry in candidates)
+        winners = [entry for entry in candidates if entry[0] == best]
+        if len(winners) > 1:
+            # Guessing between, say, a stop and a homing handler is worse than
+            # doing nothing and saying why.
+            named = ", ".join(" ".join(entry[1][1] or ()) or "*" for entry in winners)
+            return Result(
+                ok=False,
+                reason=f"The command is ambiguous: it matches {named} equally. Nothing was done.",
+            )
+        try:
+            result = interpret(winners[0][3](command))
+            if not result.ok and not result.reason:
+                # The protocol requires a reason with every failure; a bare exit
+                # code is still worth naming rather than leaving the operator blank.
+                code = f" with exit code {result.code}" if result.code is not None else ""
+                result.reason = f"The handler reported failure{code} and gave no reason."
+            return result
+        except Exception as error:  # noqa: BLE001 - reported, not swallowed
+            # A handler that raised did not do the thing. Saying so is the
+            # whole point; the traceback is the operator's, in their log.
+            return Result(ok=False, reason=f"{type(error).__name__}: {error}")
 
     def check(self, wait: float = 0.0) -> bool:
         """Answer one pending command if there is one. True if one was handled.
@@ -430,13 +474,13 @@ class Client:
 
     def apply(self, command: Command) -> Result:
         """Run a command and report what happened, exactly once."""
-        if command.cmd_id in self._applied:
-            # Already done, and the server is asking again because it did not
-            # hear the answer. Re-running it would fire a relay twice.
-            result = Result(ok=True, output=["Already applied; not repeated."])
-        else:
+        result = self._applied.get(command.cmd_id)
+        if result is None:
             result = self.dispatch(command)
-            self._remember(command.cmd_id)
+            self._remember(command.cmd_id, result)
+        # Otherwise it already ran and the server is asking again because it did
+        # not hear the answer. Re-running would fire a relay twice, and answering
+        # success would hide a failure, so the original result is replayed.
 
         self._request(
             "POST",
@@ -454,10 +498,10 @@ class Client:
         )
         return result
 
-    def _remember(self, cmd_id: str) -> None:
-        self._applied.append(cmd_id)
-        if len(self._applied) > self._applied_limit:
-            del self._applied[: len(self._applied) - self._applied_limit]
+    def _remember(self, cmd_id: str, result: Result) -> None:
+        self._applied[cmd_id] = result
+        while len(self._applied) > self._applied_limit:
+            self._applied.popitem(last=False)
 
     def poll(self, wait: Optional[float] = None) -> Optional[Command]:
         """Wait for the next command, or return None when the wait elapses."""
