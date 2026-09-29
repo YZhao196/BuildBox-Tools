@@ -18,11 +18,10 @@ binding is a port, not a project.
 These are not conventions. The server enforces both, and a device that assumes
 otherwise will be refused rather than accommodated.
 
-1. **A reading is always labelled.** Every event sent to `/api/device/ingest`
-   carries `source: "device"`, which the server sets itself rather than reading
-   from the wire. A value a device reports can therefore never be confused with
-   one the server modelled when no device was present, and a device cannot claim
-   to be the model.
+1. **A batch is labelled by its sender.** Every `events` message carries
+   `source: "device"` on the batch, and the server refuses one that claims
+   otherwise. A reading is sent by the thing that measured it, and a device
+   cannot present its readings as anyone else's.
 2. **A write is never invented.** If a device cannot do what it was asked, it
    answers `ok: false` with a reason. It must never answer `ok: true` for work it
    did not finish. A kill switch that reports having stopped something is the most

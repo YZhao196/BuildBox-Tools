@@ -85,9 +85,10 @@ caller for the whole timeout to be told what was already true when they asked.
 Two rules run through the whole thing, and they come from the protocol rather
 than from taste:
 
-1. **A reading is always labelled.** Everything passed to `on_events` carries
-   `source: "device"`, set here rather than read from the wire — so a value a
-   sensor reported can never be mistaken for one a model produced.
+1. **A batch is labelled by its sender.** Every `events` message carries
+   `source: "device"` on the batch, and this end refuses one that claims
+   otherwise — so the readings a sensor reported are never taken for anything
+   but the sensor's.
 2. **A write is never invented.** A command a device cannot perform is refused,
    a device that fails to answer is reported as unconfirmed, and a command that
    timed out is never delivered afterwards.

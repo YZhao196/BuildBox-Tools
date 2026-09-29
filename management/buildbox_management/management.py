@@ -50,9 +50,9 @@ from .registry import DEFAULT_ONLINE_WINDOW, Device, DeviceSummary, Registry
 class Reading:
     """One accepted batch, handed to every `on_events` callback.
 
-    The events are passed through as they arrived, with `source` set to
-    ``"device"`` by *this* code rather than read from the wire — a value a
-    device reported can therefore never be mistaken for one a model produced.
+    The events are passed through exactly as they arrived. This end adds no
+    provenance to them: a reading carries only what the device sent, and the
+    batch's own ``source`` label is checked at the door rather than restamped.
     """
 
     module_id: str
@@ -360,9 +360,8 @@ class Management:
             return _error(
                 400, "malformed", f"Expected a {protocol.VERSION} events batch."
             )
-        # A device is the thing that measured these numbers. Anything else is a
-        # device claiming to be a model, which is the distinction the field exists
-        # for — and this end sets the value it passes on, so a device cannot.
+        # A device is the thing that measured these numbers, and the batch it
+        # sends has to say so. Anything else is refused rather than accommodated.
         if parsed.get("source") != "device":
             return _error(
                 400, "malformed", "A device must send source: \"device\"."
@@ -410,7 +409,7 @@ class Management:
         # entitled to assume the batch it sent is the batch that arrived.
         reading = Reading(
             module_id=module_id,
-            events=[{**event, "source": "device"} for event in events],
+            events=list(events),
             device_id=device.id,
             device_label=device.label,
         )

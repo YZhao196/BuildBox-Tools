@@ -125,7 +125,7 @@ def test_a_revoked_device_cannot_report(box):
 # ------------------------------------------------------------------ #
 
 
-def test_a_reading_arrives_and_is_labelled_as_a_devices(box):
+def test_a_reading_arrives_unaltered(box):
     management, url, received = box
     _, client = a_device(management, url)
 
@@ -137,8 +137,10 @@ def test_a_reading_arrives_and_is_labelled_as_a_devices(box):
     assert reading.device_label == "rover"
     assert reading.events[0]["key"] == "temperature"
     assert reading.events[0]["value"] == 21.5
-    # The receiver sets provenance, so a device cannot claim to be the model.
-    assert reading.events[0]["source"] == "device"
+    # The receiver adds nothing to a reading. Provenance was the one field it
+    # used to stamp on each event; with modelling gone there is no second value
+    # to distinguish, so the field is deleted at both ends rather than restamped.
+    assert "source" not in reading.events[0]
 
 
 def test_a_device_scoped_to_one_module_need_not_name_it_every_time(box):
