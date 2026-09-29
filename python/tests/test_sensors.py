@@ -7,8 +7,10 @@ not become a number on the canvas.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -279,3 +281,159 @@ class _SilentPort:
 
     def close(self):
         pass
+
+
+# ------------------------------------------------------------------ #
+# camera_frame — no camera and no cv2 on this machine, so the        #
+# capture path is exercised against a fake OpenCV.                   #
+# ------------------------------------------------------------------ #
+
+
+def fake_camera(monkeypatch, *, reads=None, opened=True, encode_ok=True, payload=b"\x89PNG"):
+    """A camera, with only the OpenCV surface the reader touches.
+
+    `reads` is the sequence of `read()` verdicts; `opened` is what `isOpened()`
+    says. Everything real about the reader — when it opens, when it drops the
+    handle, how it encodes, what it refuses — runs against this.
+    """
+    created = {"opens": 0, "capture": None}
+
+    class FakeFrame:
+        shape = (480, 640, 3)
+
+    class FakeBuffer:
+        def tobytes(self):
+            return payload
+
+    class FakeCapture:
+        def __init__(self, index):
+            self.index = index
+            self.released = False
+            self.settings = {}
+            self._reads = list(reads if reads is not None else [True])
+            created["opens"] += 1
+            created["capture"] = self
+
+        def isOpened(self):
+            return opened
+
+        def set(self, prop, value):
+            self.settings[prop] = value
+
+        def read(self):
+            ok = self._reads.pop(0) if self._reads else True
+            return (True, FakeFrame()) if ok else (False, None)
+
+        def release(self):
+            self.released = True
+
+    module = types.SimpleNamespace(
+        VideoCapture=FakeCapture,
+        CAP_PROP_FRAME_WIDTH=3,
+        CAP_PROP_FRAME_HEIGHT=4,
+        CAP_PROP_FPS=5,
+        imencode=lambda extension, frame: (encode_ok, FakeBuffer()),
+    )
+    monkeypatch.setitem(sys.modules, "cv2", module)
+    return created
+
+
+def test_a_captured_frame_arrives_as_an_image_shape(monkeypatch):
+    # What the protocol defines and the server already accepts: the `image`
+    # shape, as a data URL, built by data.image_frame.
+    fake_camera(monkeypatch, payload=b"\x89PNG")
+    events = sensors.camera_frame(0, mime="image/png")()
+
+    assert events[0]["kind"] == "shape"
+    assert events[0]["shape"] == "image"
+    assert events[0]["image"].startswith("data:image/png;base64,")
+
+
+def test_the_reported_resolution_is_the_frames_own(monkeypatch):
+    fake_camera(monkeypatch)
+    events = sensors.camera_frame(0)()
+    readings = {event["key"]: event["value"] for event in events if event["kind"] == "sample"}
+    assert readings == {"resolution x": 640.0, "resolution y": 480.0}
+
+
+def test_the_camera_is_opened_once_and_kept_open(monkeypatch):
+    # Same reason as SerialReader: reopening a capture device per frame drops
+    # frames and lets the exposure wander.
+    created = fake_camera(monkeypatch)
+    read = sensors.camera_frame(0)
+    read()
+    read()
+
+    assert created["opens"] == 1
+    assert created["capture"].released is False
+
+
+def test_requested_settings_are_passed_to_the_driver(monkeypatch):
+    created = fake_camera(monkeypatch)
+    sensors.camera_frame(0, width=320, height=240, fps=15)()
+
+    settings = created["capture"].settings
+    assert settings == {3: 320, 4: 240, 5: 15}
+
+
+def test_a_missing_opencv_names_the_install(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", None)  # unimportable, whatever is installed
+    with pytest.raises(sensors.SensorError) as error:
+        sensors.camera_frame(0)()
+    message = str(error.value)
+    assert "opencv-python" in message
+    assert "pip install" in message
+
+
+def test_a_missing_camera_is_refused_with_its_index(monkeypatch):
+    fake_camera(monkeypatch, opened=False)
+    with pytest.raises(sensors.SensorError) as error:
+        sensors.camera_frame(2)()
+    message = str(error.value)
+    assert "camera 2" in message
+    assert "not present" in message
+
+
+def test_a_camera_with_no_frame_is_a_fault_not_a_placeholder(monkeypatch):
+    # The defect this whole reader is arranged around: a frame nobody captured
+    # must never reach the canvas. An open camera that yields nothing is a fault.
+    created = fake_camera(monkeypatch, reads=[False])
+    read = sensors.camera_frame(0)
+    with pytest.raises(sensors.SensorError) as error:
+        read()
+    assert "returned no frame" in str(error.value)
+    # And the handle is dropped, so a reconnected camera recovers on the next read.
+    assert created["capture"].released is True
+
+
+def test_an_encoding_it_cannot_produce_is_refused_at_construction():
+    with pytest.raises(sensors.SensorError) as error:
+        sensors.camera_frame(0, mime="image/tiff")
+    assert "image/tiff" in str(error.value)
+
+
+def test_a_captured_frame_reaches_the_wire_as_a_shape(recorder, monkeypatch):
+    fake_camera(monkeypatch)
+    client = make_client()
+    client.sensor("camera", sensors.camera_frame(0))
+
+    client.sample_once()
+
+    events = recorder.sent_events()
+    assert any(event["kind"] == "shape" and event["shape"] == "image" for event in events)
+    # Sent as a shape, not as a sample under the sensor's key.
+    assert not any(event["kind"] == "sample" and event.get("key") == "camera" for event in events)
+
+
+def test_a_camera_that_cannot_be_read_plots_no_image(recorder, monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    client = make_client()
+    client.sensor("camera", sensors.camera_frame(0))
+
+    client.sample_once()
+
+    events = recorder.sent_events()
+    assert not any(event["kind"] == "shape" for event in events)
+    assert any(
+        event["kind"] == "log" and "opencv-python" in event["message"] for event in events
+    )

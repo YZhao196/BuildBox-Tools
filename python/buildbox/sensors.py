@@ -20,6 +20,11 @@ reason these exist rather than leaving you to write the plumbing:
   satellite fix and a sensor that is broken are different, and only one of them
   is a problem.
 
+`camera_frame` is the exception to both, and deliberately: a frame is a
+*structural* reading rather than a number, so it returns the events
+`data.image_frame` builds, and a camera that is open but hands back no frame is
+unplugged rather than idle — a fault, and it raises.
+
 Ordinary Python covers most cases without any of this — a value off an object, a
 library call, a computation:
 
@@ -33,7 +38,9 @@ import re
 from pathlib import Path
 from typing import Callable, Optional
 
-__all__ = ["SensorError", "file_number", "serial_line"]
+from . import data
+
+__all__ = ["SensorError", "file_number", "serial_line", "camera_frame"]
 
 #: A callable the sampler can call to get a reading.
 Reader = Callable[[], Optional[float]]
@@ -187,3 +194,157 @@ def serial_line(
     the line when it is not the whole thing.
     """
     return SerialReader(port, baudrate=baudrate, timeout=timeout, pattern=pattern)
+
+
+#: The encodings a frame can be handed over in, and the extension that names each
+#: to OpenCV. A mime outside this table is refused rather than guessed at, because
+#: a wrong extension produces bytes labelled as something they are not.
+_ENCODINGS = {"image/png": ".png", "image/jpeg": ".jpg"}
+
+
+class CameraReader:
+    """A camera captured from, opened on the first read and kept open.
+
+    Same shape as `SerialReader`, for the same reasons: opening a capture device
+    per frame is slow enough to drop frames and, on some drivers, to make the
+    exposure wander, so it is opened once and held. A read that fails closes it so
+    the next one reopens, and a camera unplugged and plugged back in recovers
+    without restarting the device.
+
+    This is the one reader here that produces a *structural* reading rather than
+    a number: a frame reaches the canvas as the `image` shape the protocol
+    defines, built by `data.image_frame`, not as a series of samples.
+
+    There is no "nothing to report yet" state. A camera that is open but hands
+    back no frame is unplugged or has failed — that is a fault, not silence, so it
+    raises rather than returning anything. A fabricated frame would be an
+    illustration of a camera rather than a picture from one.
+    """
+
+    def __init__(
+        self,
+        index: int,
+        *,
+        mime: str,
+        width: Optional[int],
+        height: Optional[int],
+        fps: Optional[float],
+    ) -> None:
+        if mime not in _ENCODINGS:
+            raise SensorError(
+                f"{mime!r} is not a frame encoding this reader can produce; "
+                f"use one of {sorted(_ENCODINGS)}."
+            )
+        self.index = index
+        self.mime = mime
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self._handle = None
+        self._cv2 = None
+
+    def open(self) -> None:
+        try:
+            import cv2  # type: ignore[import-not-found]
+        except ImportError:
+            raise SensorError(
+                "opencv-python is not installed, so camera "
+                f"{self.index} cannot be read. Install it with: "
+                "pip install opencv-python"
+            ) from None
+        try:
+            handle = cv2.VideoCapture(self.index)
+        except Exception as error:  # noqa: BLE001 - the backend raises a wide range
+            raise SensorError(f"camera {self.index} could not be opened: {error}") from None
+        if not handle.isOpened():
+            handle.release()
+            raise SensorError(
+                f"camera {self.index} is not present: no capture device answered. "
+                "This machine has no camera at this index."
+            )
+        # The requested size is a hint to the driver; the frame's own size is what
+        # gets reported, because that is what the device actually produced.
+        if self.width is not None:
+            handle.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        if self.height is not None:
+            handle.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        if self.fps is not None:
+            handle.set(cv2.CAP_PROP_FPS, self.fps)
+        self._cv2 = cv2
+        self._handle = handle
+
+    def close(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            self._handle.release()
+        except Exception:  # noqa: BLE001 - releasing a camera that has gone away
+            pass
+        self._handle = None
+        self._cv2 = None
+
+    def __call__(self) -> list:
+        if self._handle is None:
+            self.open()
+
+        try:
+            ok, frame = self._handle.read()
+        except Exception as error:  # noqa: BLE001
+            # Drop the handle so the next read reopens rather than failing forever
+            # on a device that has gone away.
+            self.close()
+            raise SensorError(f"camera {self.index} could not be read: {error}") from None
+
+        if not ok or frame is None:
+            # The device answered and had no frame to give. A camera has no
+            # "nothing to report yet" state, so this is a fault and is reported as
+            # one — never filled in with a frame nobody captured.
+            self.close()
+            raise SensorError(f"camera {self.index} returned no frame")
+
+        try:
+            encoded, buffer = self._cv2.imencode(_ENCODINGS[self.mime], frame)
+        except Exception as error:  # noqa: BLE001
+            self.close()
+            raise SensorError(f"camera {self.index} frame could not be encoded: {error}") from None
+        if not encoded:
+            raise SensorError(f"camera {self.index} frame could not be encoded as {self.mime}")
+
+        shape = getattr(frame, "shape", None)
+        height, width = (shape[0], shape[1]) if shape and len(shape) >= 2 else (None, None)
+        return data.image_frame(
+            buffer.tobytes(), mime=self.mime, width=width, height=height
+        )
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return f"<CameraReader {self.index} {self.mime}>"
+
+
+def camera_frame(
+    index: int = 0,
+    *,
+    mime: str = "image/png",
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    fps: Optional[float] = None,
+) -> Reader:
+    """A reader for a camera, capturing one frame per call.
+
+    A camera is the one device here whose reading is a picture rather than a
+    number, so it returns the `image` shape `data.image_frame` builds and the
+    client sends it as a structural reading. `index` is OpenCV's capture-device
+    index — `0` is the first camera — and `width`/`height`/`fps` are hints to the
+    driver; the resolution reported is always the frame's own.
+
+    Needs OpenCV (`pip install opencv-python`), imported on first use so a device
+    that never reads a camera does not need it. With no camera at `index`, or with
+    OpenCV absent, the reader raises `SensorError` naming which — it never returns
+    a placeholder frame.
+
+        from buildbox import Client, sensors
+
+        bb = Client()
+        bb.sensor("camera", sensors.camera_frame(0), every=1.0)
+        bb.run()
+    """
+    return CameraReader(index, mime=mime, width=width, height=height, fps=fps)

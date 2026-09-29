@@ -138,7 +138,10 @@ tick reports again. A device with its own loop can use `sample_once()` and
 file — which is how thermal zones, voltages and fan speeds are read on a Pi.
 `sensors.serial_line(port, baudrate=, pattern=)` reads one line at a time from a
 serial sensor through pyserial, keeping the port open and reconnecting if it
-disappears.
+disappears. `sensors.camera_frame(index=0)` captures a frame from a camera through
+OpenCV and sends it as the `image` shape — the one reader whose reading is a
+picture rather than a number. It needs `pip install opencv-python`, and with no
+camera or no OpenCV it raises naming which rather than inventing a frame.
 
 ### Reading a bus
 
