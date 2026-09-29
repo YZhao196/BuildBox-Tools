@@ -17,6 +17,7 @@ PRESETS: list[tuple[str, str]] = [
     ('General', 'Tailscale Peer'),
     ('General', 'AI API'),
     ('General', 'Generic Control'),
+    ('General', 'Homing'),
     ('ROS2', 'ROS2 Topic Subscriber'),
     ('ROS2', 'ROS2 Topic Publisher'),
     ('ROS2', 'ROS2 Service Client'),

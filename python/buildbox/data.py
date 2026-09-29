@@ -1133,6 +1133,7 @@ PRESET_BUILDERS: Dict[str, Optional[Callable[..., List[Event]]]] = {
     "Tailscale Peer": tailscale_peer,
     "AI API": ai_response,
     "Generic Control": script_output,
+    "Homing": None,  # Sends a command: use an action.
     # ROS2
     "ROS2 Topic Subscriber": ros2_message,
     "ROS2 Topic Publisher": None,  # Sends a command; nothing is captured.
@@ -1211,6 +1212,7 @@ NON_CAPTURING: Dict[str, str] = {
         "Heatmap": "buckets a stream server-side",
         "Comparison View": "compares two sessions",
         "Report Generator": "compiles the session log",
+        "Homing": "sends a command",
     }.items()
 }
 
