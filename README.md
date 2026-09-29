@@ -72,7 +72,7 @@ Three modules make up the device's reading surface:
   (`can_signal`, `can_frames`), `I²C` (`i2c_register`), `SPI` (`spi_block`), `GPIO`
   (`gpio_line`, `gpio_pulses`) and `ROS2` (`ros2_topic`, `ros2_laser_scan`,
   `ros2_joint_state`).
-- **`buildbox.data`** — a builder for every kind of reading the product's 67
+- **`buildbox.data`** — a builder for every kind of reading the product's 68
   presets carry, so sending a laser sweep or a GPS fix is a call rather than a
   field map.
 

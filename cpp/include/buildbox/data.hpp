@@ -836,6 +836,7 @@ inline const char* non_capturing_reason(const std::string& preset) {
       {"Data Logger", "records a stream it is pointed at"},
       {"ROS2 Topic Publisher", "sends a command"},
       {"MQTT Publisher", "sends a command"},
+      {"Homing", "sends a command"},
       {"Live Plotter", "draws a stream"},
       {"Gauge", "draws a value"},
       {"Stat Tile", "draws a value"},

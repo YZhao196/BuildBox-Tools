@@ -81,8 +81,8 @@ bb.send(data::image_frame(jpeg_bytes));            // Camera Capture
 ```
 
 Every function returns a `std::vector<Json>`, because most real readings are more
-than one number. `preset_builder_name` maps each of the 67 catalogue presets to
-the function that feeds it, `non_capturing_reason` says why the other nine have
+than one number. `preset_builder_name` maps each of the 68 catalogue presets to
+the function that feeds it, `non_capturing_reason` says why the other ten have
 none, and `uncovered()` reports any preset with neither — which `test_data.cpp`
 asserts is empty. Add a preset without a function and the build's tests fail.
 

@@ -70,8 +70,8 @@ bb.send(data.image_frame(jpeg_bytes))                 # Camera Capture
 Every function returns a **list** of events, because most real readings are more
 than one number — an IMU is nine, a GPS fix is six. `send` takes either a list or
 a single event. The whole set is listed in `buildbox/data.py`, and
-`data.PRESET_BUILDERS` maps each of the 67 presets in the catalogue to the
-function that feeds it. Nine are deliberately absent — a control sends a command
+`data.PRESET_BUILDERS` maps each of the 68 presets in the catalogue to the
+function that feeds it. Ten map to none, deliberately — a control sends a command
 rather than capturing data — and `data.NON_CAPTURING` says which and why.
 
 A test proves it stays complete: add a preset to the catalogue without a function

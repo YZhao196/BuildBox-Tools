@@ -71,7 +71,8 @@ bearer token first and refuses without one.
 
 ### `hello`
 
-Optional. Sent so the server can record what a device is.
+Optional. Sent to `POST /api/device/ingest`, so the server can record what a
+device is; it counts as a heartbeat and publishes nothing.
 
 ```json
 { "v": "bbp/1", "type": "hello", "agent": "python/0.1.0", "capabilities": ["temperature"] }
@@ -187,7 +188,18 @@ command from firing a relay twice.
 | `401` | token missing, unknown or revoked |
 | `403` | module outside the device's scope |
 | `404` | module not on the device's project |
+| `409` | the message's `v` is not `bbp/1` (or is missing); the body names both versions |
 | `422` | a reading the module's preset could not have produced |
+
+Every refusal body carries `{ "error": "<code>", "message": "<sentence>" }` (a `400`
+adds the schema `issues`). The version
+check (`error: "bridge-version"`) applies to `POST /api/device/ingest` and
+`POST /api/device/results`, and runs after the token check, so a bad token is still
+`401` whatever the version.
+
+A `result` whose `cmdId` the server is no longer waiting for (it already timed the
+command out) is not an error: it answers `200` with
+`{ "accepted": false, "reason": "…" }`.
 
 ---
 
@@ -198,8 +210,12 @@ module in question. The connection is a server-side fact derived from the long
 poll, so a device that has stopped answering cannot hold the state open, and a
 device asserting that it is alive is not evidence that it is.
 
-With no device connected, the preset reports what it always did — `simulated`
-with a reason naming what is missing, or `unavailable`.
+With no device connected, the preset reports `unavailable` with a reason naming
+what is missing — unless the server's own local path can genuinely reach the
+hardware (a serial port that exists on the server, say), in which case it reports
+that `available` for a read. A write with no device is always `unavailable`.
+There is no `simulated` state: no value is ever modelled in place of one a device
+did not send.
 
 `available` never implies a write will succeed. Every action that changes
 anything requires a single-use confirmation token minted by the server, and that
