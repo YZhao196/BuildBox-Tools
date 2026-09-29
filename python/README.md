@@ -140,7 +140,8 @@ file — which is how thermal zones, voltages and fan speeds are read on a Pi.
 serial sensor through pyserial, keeping the port open and reconnecting if it
 disappears. `sensors.camera_frame(index=0)` captures a frame from a camera through
 OpenCV and sends it as the `image` shape — the one reader whose reading is a
-picture rather than a number. It needs `pip install opencv-python`, and with no
+picture rather than a number. OpenCV is a heavy native wheel, so it is its own
+extra rather than part of `drivers`: `pip install "./python[camera]"`. With no
 camera or no OpenCV it raises naming which rather than inventing a frame.
 
 ### Reading a bus

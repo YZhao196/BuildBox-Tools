@@ -32,6 +32,12 @@ dependencies = []
 # `RPi.GPIO`/`Jetson.GPIO` build only on their own board, so listing them would
 # make this extra uninstallable on the machine it is typed on.
 drivers = ["pyserial>=3.5", "python-can>=4.0", "pymodbus>=3.0", "smbus2>=0.4"]
+# OpenCV is a heavy native wheel, so the camera reader gets its own extra rather
+# than joining `drivers` — which every install of that extra would then carry,
+# including the many devices with no camera. A camera is one command
+# (`pip install "./python[camera]"`), and nothing else pays for it. `spidev` and
+# the board GPIO libraries stay out of both extras for the reason above.
+camera = ["opencv-python>=4.8"]
 dev = ["pytest>=7"]
 
 [project.scripts]
