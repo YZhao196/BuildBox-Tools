@@ -262,3 +262,16 @@ def test_a_frame_is_encoded_as_a_data_url():
     events = data.image_frame(b"\x89PNG\r\n", mime="image/png")
     shape = next(e for e in events if e["kind"] == "shape")
     assert shape["image"].startswith("data:image/png;base64,")
+
+
+def test_a_frame_the_server_would_refuse_is_refused_here_with_the_fix():
+    # The server's cap (routes/devices.ts, IMAGE_MAX_CHARS) and its four types.
+    # Refusing here names the fix; sending would only earn a bare 422.
+    with pytest.raises(ValueError, match="JPEG|resolution"):
+        data.image_frame(b"\x00" * (400 * 1024), mime="image/png")
+    with pytest.raises(ValueError, match="png, jpeg, gif or webp"):
+        data.image_frame(b"\x00", mime="image/bmp")
+    with pytest.raises(ValueError, match="base64 data URL"):
+        data.image_frame("https://example.com/frame.png")
+    # Just under the cap still goes.
+    assert data.image_frame(b"\x00" * (380 * 1024), mime="image/jpeg")

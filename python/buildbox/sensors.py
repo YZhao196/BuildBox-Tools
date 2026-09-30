@@ -312,9 +312,12 @@ class CameraReader:
 
         shape = getattr(frame, "shape", None)
         height, width = (shape[0], shape[1]) if shape and len(shape) >= 2 else (None, None)
-        return data.image_frame(
-            buffer.tobytes(), mime=self.mime, width=width, height=height
-        )
+        try:
+            return data.image_frame(
+                buffer.tobytes(), mime=self.mime, width=width, height=height
+            )
+        except ValueError as error:  # over the server's size cap
+            raise SensorError(f"camera {self.index}: {error}") from None
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
         return f"<CameraReader {self.index} {self.mime}>"
@@ -323,7 +326,9 @@ class CameraReader:
 def camera_frame(
     index: int = 0,
     *,
-    mime: str = "image/png",
+    # JPEG, because a PNG of an ordinary 640x480 camera frame is usually over the
+    # server's 512 KiB data-URL cap (`data.IMAGE_MAX_CHARS`).
+    mime: str = "image/jpeg",
     width: Optional[int] = None,
     height: Optional[int] = None,
     fps: Optional[float] = None,

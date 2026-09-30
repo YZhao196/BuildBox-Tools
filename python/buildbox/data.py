@@ -34,6 +34,7 @@ that side is invisible here until `scripts/sync_presets.py` is run again.
 from __future__ import annotations
 
 import base64
+import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from . import protocol
@@ -46,6 +47,11 @@ Severities = ("info", "warn", "error")
 
 #: The statuses a module light may take.
 Statuses = ("ok", "warn", "error", "idle", "armed", "fired")
+
+#: The largest frame the server accepts, in characters of its data URL.
+IMAGE_MAX_CHARS = 512 * 1024
+_IMAGE_TYPES = ("png", "jpeg", "gif", "webp")
+_IMAGE_DATA_URL = re.compile(r"^data:image/([a-z0-9.+-]+);base64,[A-Za-z0-9+/]*={0,2}$")
 
 
 # ------------------------------------------------------------------ #
@@ -221,6 +227,19 @@ def image_frame(
         url = f"data:{mime};base64,{base64.b64encode(frame).decode('ascii')}"
     else:
         url = frame
+
+    # The server's own test (routes/devices.ts, `imageRefusal`), made here so the
+    # refusal names the fix instead of arriving as a bare 422.
+    match = _IMAGE_DATA_URL.match(url)
+    if not match:
+        raise ValueError("A frame must be a base64 data URL (data:image/...;base64,...).")
+    if match.group(1) not in _IMAGE_TYPES:
+        raise ValueError(f"A frame must be png, jpeg, gif or webp, not {match.group(1)}.")
+    if len(url) > IMAGE_MAX_CHARS:
+        raise ValueError(
+            f"This frame is {len(url)} characters as a data URL; the server takes at most "
+            f"{IMAGE_MAX_CHARS}. Send image/jpeg or lower the camera resolution."
+        )
 
     events: List[Event] = [{"kind": "shape", "shape": "image", "image": url}]
     events.extend(

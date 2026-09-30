@@ -108,7 +108,7 @@ a single number cannot:
 | `joints` | one position per joint | `labels` |
 | `map` | occupancy 0..100 per cell, row-major | `cols`, `rows` |
 | `trail` | one x, y pose; the client accumulates the path | |
-| `image` | — | `image`, a `data:` URL |
+| `image` | — | `image`, a base64 PNG, JPEG, GIF or WebP `data:` URL of at most 524288 characters |
 
 A batch is **all or nothing**. A partially applied batch would leave the
 interface showing values the device never measured.
